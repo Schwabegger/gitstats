@@ -1,0 +1,1233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitStats — test_repo</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:ital,wght@0,400;0,500;0,700;1,400&display=swap');
+
+:root {
+    --bg: #0e1117;
+    --surface: #161b22;
+    --surface2: #1c2333;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text2: #8b949e;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --accent3: #d2a8ff;
+    --accent4: #f78166;
+    --accent5: #ffa657;
+    --danger: #f85149;
+    --radius: 10px;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'DM Sans', -apple-system, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+    max-width: 1340px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+}
+
+header {
+    text-align: center;
+    padding: 3rem 0 2.5rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2.5rem;
+}
+header h1 {
+    font-family: var(--mono);
+    font-size: 2rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--accent);
+}
+header h1 span { color: var(--text2); font-weight: 400; }
+header p {
+    color: var(--text2);
+    margin-top: .5rem;
+    font-size: .9rem;
+    word-break: break-all;
+}
+
+nav {
+    display: flex;
+    gap: .5rem;
+    justify-content: center;
+    margin-bottom: 2.5rem;
+    flex-wrap: wrap;
+}
+nav a {
+    font-family: var(--mono);
+    font-size: .8rem;
+    padding: .55rem 1.1rem;
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text2);
+    text-decoration: none;
+    border: 1px solid var(--border);
+    transition: all .15s;
+    cursor: pointer;
+    user-select: none;
+}
+nav a:hover, nav a.active {
+    background: var(--accent);
+    color: var(--bg);
+    border-color: var(--accent);
+}
+
+.section { display: none; }
+.section.active { display: block; }
+.section-title {
+    font-family: var(--mono);
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+    padding-bottom: .75rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--accent3);
+}
+
+.stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+.stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+}
+.stat-card .label {
+    font-size: .75rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text2);
+    margin-bottom: .35rem;
+    font-family: var(--mono);
+}
+.stat-card .value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    font-family: var(--mono);
+    color: var(--text);
+}
+.stat-card .sub {
+    font-size: .78rem;
+    color: var(--text2);
+    margin-top: .25rem;
+}
+
+.info-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 2rem;
+    font-size: .88rem;
+}
+.info-table td {
+    padding: .6rem .8rem;
+    border-bottom: 1px solid var(--border);
+}
+.info-table td:first-child {
+    color: var(--text2);
+    font-family: var(--mono);
+    font-size: .8rem;
+    width: 200px;
+    white-space: nowrap;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .82rem;
+    margin-bottom: 2rem;
+}
+.data-table thead th {
+    font-family: var(--mono);
+    font-size: .72rem;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text2);
+    padding: .6rem .7rem;
+    text-align: left;
+    border-bottom: 2px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+}
+.data-table thead th.num { text-align: right; }
+.data-table tbody td {
+    padding: .55rem .7rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+}
+.data-table tbody td.num { text-align: right; font-family: var(--mono); font-size: .8rem; }
+.data-table tbody td.add { color: var(--accent2); }
+.data-table tbody td.del { color: var(--danger); }
+.data-table tbody td.author-name { font-weight: 500; }
+.data-table tbody td.commit-msg {
+    max-width: 400px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.data-table tbody tr:hover { background: var(--surface); }
+
+code {
+    font-family: var(--mono);
+    font-size: .82rem;
+    color: var(--accent5);
+}
+
+.chart-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+.chart-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+}
+.chart-box.full { grid-column: 1 / -1; }
+.chart-box h3 {
+    font-family: var(--mono);
+    font-size: .78rem;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-bottom: 1rem;
+}
+.chart-box canvas { width: 100% !important; }
+
+.heatmap-wrap { overflow-x: auto; margin-bottom: 2rem; }
+.heatmap {
+    display: grid;
+    grid-template-columns: 60px repeat(24, 1fr);
+    gap: 2px;
+    min-width: 600px;
+}
+.heatmap .label {
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--text2);
+    display: flex;
+    align-items: center;
+    padding-right: .5rem;
+}
+.heatmap .cell {
+    aspect-ratio: 1;
+    border-radius: 3px;
+    min-height: 18px;
+    transition: transform .1s;
+    cursor: default;
+}
+.heatmap .cell:hover { transform: scale(1.3); z-index: 2; }
+.heatmap .hour-label {
+    font-family: var(--mono);
+    font-size: .65rem;
+    color: var(--text2);
+    text-align: center;
+}
+
+.table-wrap { overflow-x: auto; }
+
+/* ── Contribution cards ── */
+.contrib-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .75rem;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+.contrib-controls label {
+    font-family: var(--mono);
+    font-size: .75rem;
+    color: var(--text2);
+}
+.contrib-controls select,
+.contrib-controls input[type="range"] {
+    font-family: var(--mono);
+    font-size: .78rem;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: .35rem .6rem;
+    outline: none;
+}
+.contrib-controls select:focus { border-color: var(--accent); }
+.btn-group {
+    display: inline-flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.btn-group button {
+    font-family: var(--mono);
+    font-size: .72rem;
+    padding: .4rem .8rem;
+    background: var(--surface);
+    color: var(--text2);
+    border: none;
+    border-right: 1px solid var(--border);
+    cursor: pointer;
+    transition: all .12s;
+}
+.btn-group button:last-child { border-right: none; }
+.btn-group button.active {
+    background: var(--accent);
+    color: var(--bg);
+}
+.btn-group button:hover:not(.active) {
+    background: var(--surface2);
+    color: var(--text);
+}
+
+.contrib-cards {
+    display: grid;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+.contrib-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+}
+.contrib-card .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: .75rem;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+.contrib-card .card-header .author-info {
+    display: flex;
+    align-items: baseline;
+    gap: .75rem;
+}
+.contrib-card .card-header .rank {
+    font-family: var(--mono);
+    font-size: .7rem;
+    color: var(--text2);
+    min-width: 24px;
+}
+.contrib-card .card-header .name {
+    font-weight: 600;
+    font-size: .95rem;
+}
+.contrib-card .card-header .stat-pills {
+    display: flex;
+    gap: .5rem;
+    font-family: var(--mono);
+    font-size: .72rem;
+}
+.contrib-card .card-header .pill {
+    padding: .15rem .5rem;
+    border-radius: 4px;
+    background: var(--surface2);
+    color: var(--text2);
+}
+.contrib-card .card-header .pill.commits { color: var(--accent); }
+.contrib-card .card-header .pill.add { color: var(--accent2); }
+.contrib-card .card-header .pill.del { color: var(--danger); }
+.contrib-card canvas { width: 100% !important; }
+
+footer {
+    text-align: center;
+    padding: 2rem 0;
+    border-top: 1px solid var(--border);
+    margin-top: 3rem;
+    color: var(--text2);
+    font-size: .78rem;
+}
+
+@media (max-width: 768px) {
+    .chart-row { grid-template-columns: 1fr; }
+    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    header h1 { font-size: 1.4rem; }
+    .contrib-controls { flex-direction: column; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<header>
+    <h1>test_repo <span>— gitstats</span></h1>
+    <p>Report generated 2026-04-17 07:49:19 UTC &nbsp;·&nbsp; https://github.com/dmitryn/GitStats.git</p>
+</header>
+
+<nav>
+    <a class="active" data-sec="general">General</a>
+    <a data-sec="activity">Activity</a>
+    <a data-sec="authors">Authors</a>
+    <a data-sec="contributions">Contributions</a>
+    <a data-sec="files">Files</a>
+    <a data-sec="lines">Lines</a>
+    <a data-sec="tags">Tags</a>
+</nav>
+
+<!-- ═══════ GENERAL ═══════ -->
+<div id="sec-general" class="section active">
+    <h2 class="section-title">General</h2>
+    <div class="stat-grid">
+        <div class="stat-card">
+            <div class="label">Total Commits</div>
+            <div class="value">111</div>
+            <div class="sub">116 including merges</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Authors</div>
+            <div class="value">9</div>
+            <div class="sub">avg 2.7 commits / active day</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Files</div>
+            <div class="value">17</div>
+            <div class="sub">6 extension types</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Lines of Code</div>
+            <div class="value">2,891</div>
+            <div class="sub">current count from working tree</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Project Age</div>
+            <div class="value">2,940d</div>
+            <div class="sub">41 active days (1.4%)</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Branches</div>
+            <div class="value">3</div>
+            <div class="sub">0 tags</div>
+        </div>
+    </div>
+    <table class="info-table">
+        <tr><td>Repository</td><td>/home/claude/test_repo</td></tr>
+        <tr><td>First Commit</td><td>2007-09-13 16:40</td></tr>
+        <tr><td>Last Commit</td><td>2015-10-02 12:44</td></tr>
+    </table>
+    <h2 class="section-title">Recent Commits</h2>
+    <div class="table-wrap">
+    <table class="data-table">
+        <thead><tr><th>Hash</th><th>Date</th><th>Author</th><th>Message</th></tr></thead>
+        <tbody>
+        <tr>
+            <td><code>31a79af6</code></td>
+            <td>2015-10-02 12:44</td>
+            <td>.</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>b346811e</code></td>
+            <td>2015-10-02 12:43</td>
+            <td>.</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>39db55c4</code></td>
+            <td>2015-10-02 12:42</td>
+            <td>.</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>35df519a</code></td>
+            <td>2015-10-02 12:40</td>
+            <td>.</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>d1efffc7</code></td>
+            <td>2015-10-02 12:30</td>
+            <td>.</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>af00c67a</code></td>
+            <td>2015-10-02 12:29</td>
+            <td>.</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>84b84fd5</code></td>
+            <td>2015-10-02 12:28</td>
+            <td>.</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>0db0e457</code></td>
+            <td>2015-10-02 12:26</td>
+            <td>.</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>73fb5f32</code></td>
+            <td>2015-09-18 02:17</td>
+            <td>Dmitry Novotochinov</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>41ac2f15</code></td>
+            <td>2015-09-18 02:10</td>
+            <td>Dmitry Novotochinov</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>05b0a51e</code></td>
+            <td>2013-02-26 16:07</td>
+            <td>Dmitry Novotochinov</td>
+            <td class="commit-msg">Update README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>f1fe159a</code></td>
+            <td>2012-03-23 10:02</td>
+            <td>Dmitry Novotochinov</td>
+            <td class="commit-msg">*.swp files gitignored</td>
+        </tr>
+        <tr>
+            <td><code>a93803c9</code></td>
+            <td>2012-03-23 10:01</td>
+            <td>Dmitry Novotochinov</td>
+            <td class="commit-msg">&#x27;python3 is not supported&#x27; statement added to README</td>
+        </tr>
+        <tr>
+            <td><code>abc7230c</code></td>
+            <td>2012-02-21 18:48</td>
+            <td>Toon Schoenmakers</td>
+            <td class="commit-msg">Fixed the Makefile, which broke thanks to d3f07663cd</td>
+        </tr>
+        <tr>
+            <td><code>aceed3d0</code></td>
+            <td>2012-01-28 10:33</td>
+            <td>Dmitry Novotochinov</td>
+            <td class="commit-msg">README formatting again</td>
+        </tr></tbody>
+    </table>
+    </div>
+</div>
+
+<!-- ═══════ ACTIVITY ═══════ -->
+<div id="sec-activity" class="section">
+    <h2 class="section-title">Activity</h2>
+    <div class="chart-row">
+        <div class="chart-box"><h3>Commits by Hour of Day</h3><canvas id="chart-hour"></canvas></div>
+        <div class="chart-box"><h3>Commits by Day of Week</h3><canvas id="chart-dow"></canvas></div>
+    </div>
+    <div class="chart-row">
+        <div class="chart-box"><h3>Commits by Month of Year</h3><canvas id="chart-month"></canvas></div>
+        <div class="chart-box"><h3>Commits by Year</h3><canvas id="chart-year"></canvas></div>
+    </div>
+    <div class="chart-row">
+        <div class="chart-box full"><h3>Commits over Time (Monthly)</h3><canvas id="chart-ym"></canvas></div>
+    </div>
+    <h2 class="section-title">Hour of Week Heatmap</h2>
+    <div class="heatmap-wrap">
+        <div class="heatmap" id="heatmap">
+            <div class="label"></div>
+            <div class="hour-label">0</div><div class="hour-label">1</div><div class="hour-label">2</div><div class="hour-label">3</div><div class="hour-label">4</div><div class="hour-label">5</div><div class="hour-label">6</div><div class="hour-label">7</div><div class="hour-label">8</div><div class="hour-label">9</div><div class="hour-label">10</div><div class="hour-label">11</div><div class="hour-label">12</div><div class="hour-label">13</div><div class="hour-label">14</div><div class="hour-label">15</div><div class="hour-label">16</div><div class="hour-label">17</div><div class="hour-label">18</div><div class="hour-label">19</div><div class="hour-label">20</div><div class="hour-label">21</div><div class="hour-label">22</div><div class="hour-label">23</div>
+        </div>
+    </div>
+    <h2 class="section-title">Activity by Author</h2>
+    <div class="contrib-controls">
+        <label>Author:</label>
+        <select id="author-activity-select">
+            <option value="Heikki Hokkanen">Heikki Hokkanen</option><option value="Dmitry Novotochinov">Dmitry Novotochinov</option><option value=".">.</option><option value="Wulf C. Krueger">Wulf C. Krueger</option><option value="Tobias Gruetzmacher">Tobias Gruetzmacher</option><option value="Christian Fufezan">Christian Fufezan</option><option value="Dmitriy Novotochinov">Dmitriy Novotochinov</option><option value="Toon Schoenmakers">Toon Schoenmakers</option><option value="Matt Parlane">Matt Parlane</option>
+        </select>
+    </div>
+    <div class="chart-row">
+        <div class="chart-box"><h3 id="author-hour-title">Commits by Hour of Day</h3><canvas id="chart-author-hour"></canvas></div>
+        <div class="chart-box"><h3 id="author-dow-title">Commits by Day of Week</h3><canvas id="chart-author-dow"></canvas></div>
+    </div>
+</div>
+
+<!-- ═══════ AUTHORS ═══════ -->
+<div id="sec-authors" class="section">
+    <h2 class="section-title">Authors (9)</h2>
+    <div class="chart-row">
+        <div class="chart-box full"><h3>Top Authors by Commits</h3><canvas id="chart-authors"></canvas></div>
+    </div>
+    <div class="table-wrap">
+    <table class="data-table">
+        <thead><tr>
+            <th>#</th><th>Author</th><th class="num">Commits</th><th class="num">%</th>
+            <th class="num">Lines +</th><th class="num">Lines −</th>
+            <th>First Commit</th><th>Last Commit</th><th class="num">Active Days</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+            <td>1</td>
+            <td class="author-name">Heikki Hokkanen</td>
+            <td class="num">81</td>
+            <td class="num">73.0%</td>
+            <td class="num add">+4,105</td>
+            <td class="num del">-294</td>
+            <td>2007-09-13 16:40</td>
+            <td>2010-01-31 07:23</td>
+            <td class="num">26</td>
+        </tr>
+        <tr>
+            <td>2</td>
+            <td class="author-name">Dmitry Novotochinov</td>
+            <td class="num">9</td>
+            <td class="num">8.1%</td>
+            <td class="num add">+25</td>
+            <td class="num del">-5</td>
+            <td>2012-01-27 16:07</td>
+            <td>2015-09-18 02:17</td>
+            <td class="num">5</td>
+        </tr>
+        <tr>
+            <td>3</td>
+            <td class="author-name">.</td>
+            <td class="num">8</td>
+            <td class="num">7.2%</td>
+            <td class="num add">+36</td>
+            <td class="num del">-20</td>
+            <td>2015-10-02 12:26</td>
+            <td>2015-10-02 12:44</td>
+            <td class="num">1</td>
+        </tr>
+        <tr>
+            <td>4</td>
+            <td class="author-name">Wulf C. Krueger</td>
+            <td class="num">4</td>
+            <td class="num">3.6%</td>
+            <td class="num add">+67</td>
+            <td class="num del">-5</td>
+            <td>2010-01-08 14:49</td>
+            <td>2010-01-17 16:56</td>
+            <td class="num">3</td>
+        </tr>
+        <tr>
+            <td>5</td>
+            <td class="author-name">Tobias Gruetzmacher</td>
+            <td class="num">3</td>
+            <td class="num">2.7%</td>
+            <td class="num add">+353</td>
+            <td class="num del">-17</td>
+            <td>2008-09-14 14:13</td>
+            <td>2008-10-20 19:42</td>
+            <td class="num">3</td>
+        </tr>
+        <tr>
+            <td>6</td>
+            <td class="author-name">Christian Fufezan</td>
+            <td class="num">2</td>
+            <td class="num">1.8%</td>
+            <td class="num add">+29</td>
+            <td class="num del">-26</td>
+            <td>2011-11-01 10:55</td>
+            <td>2011-11-01 11:05</td>
+            <td class="num">1</td>
+        </tr>
+        <tr>
+            <td>7</td>
+            <td class="author-name">Dmitriy Novotochinov</td>
+            <td class="num">2</td>
+            <td class="num">1.8%</td>
+            <td class="num add">+37</td>
+            <td class="num del">-0</td>
+            <td>2010-02-25 09:47</td>
+            <td>2010-02-25 09:53</td>
+            <td class="num">1</td>
+        </tr>
+        <tr>
+            <td>8</td>
+            <td class="author-name">Toon Schoenmakers</td>
+            <td class="num">1</td>
+            <td class="num">0.9%</td>
+            <td class="num add">+6</td>
+            <td class="num del">-6</td>
+            <td>2012-02-21 18:48</td>
+            <td>2012-02-21 18:48</td>
+            <td class="num">1</td>
+        </tr>
+        <tr>
+            <td>9</td>
+            <td class="author-name">Matt Parlane</td>
+            <td class="num">1</td>
+            <td class="num">0.9%</td>
+            <td class="num add">+2</td>
+            <td class="num del">-2</td>
+            <td>2009-05-17 10:52</td>
+            <td>2009-05-17 10:52</td>
+            <td class="num">1</td>
+        </tr></tbody>
+    </table>
+    </div>
+</div>
+
+<!-- ═══════ CONTRIBUTIONS ═══════ -->
+<div id="sec-contributions" class="section">
+    <h2 class="section-title">Contributions by Author</h2>
+    <div class="contrib-controls">
+        <label>Metric:</label>
+        <div class="btn-group" id="contrib-metric">
+            <button class="active" data-metric="commits">Commits</button>
+            <button data-metric="additions">Additions</button>
+            <button data-metric="deletions">Deletions</button>
+        </div>
+        <label>Sort by:</label>
+        <div class="btn-group" id="contrib-sort">
+            <button class="active" data-sort="total">Total</button>
+            <button data-sort="recent">Recent</button>
+        </div>
+        <label>Time range:</label>
+        <select id="contrib-range">
+            <option value="all" selected>All time</option>
+            <option value="12">Last 12 months</option>
+            <option value="6">Last 6 months</option>
+            <option value="3">Last 3 months</option>
+        </select>
+    </div>
+    <div id="contrib-cards" class="contrib-cards"></div>
+</div>
+
+<!-- ═══════ FILES ═══════ -->
+<div id="sec-files" class="section">
+    <h2 class="section-title">Files (17)</h2>
+    <div class="chart-row">
+        <div class="chart-box full"><h3>File Count over Time</h3><canvas id="chart-files-time"></canvas></div>
+    </div>
+    <h2 class="section-title">Extensions</h2>
+    <div class="table-wrap">
+    <table class="data-table">
+        <thead><tr><th>Extension</th><th class="num">Files</th><th class="num">Lines</th></tr></thead>
+        <tbody>
+        <tr>
+            <td><code>(no ext)</code></td>
+            <td class="num">9</td>
+            <td class="num">2,263</td>
+        </tr>
+        <tr>
+            <td><code>.gif</code></td>
+            <td class="num">3</td>
+            <td class="num">9</td>
+        </tr>
+        <tr>
+            <td><code>.txt</code></td>
+            <td class="num">2</td>
+            <td class="num">83</td>
+        </tr>
+        <tr>
+            <td><code>.markdown</code></td>
+            <td class="num">1</td>
+            <td class="num">71</td>
+        </tr>
+        <tr>
+            <td><code>.css</code></td>
+            <td class="num">1</td>
+            <td class="num">141</td>
+        </tr>
+        <tr>
+            <td><code>.js</code></td>
+            <td class="num">1</td>
+            <td class="num">324</td>
+        </tr></tbody>
+    </table>
+    </div>
+</div>
+
+<!-- ═══════ LINES ═══════ -->
+<div id="sec-lines" class="section">
+    <h2 class="section-title">Lines of Code</h2>
+    <div class="stat-grid">
+        <div class="stat-card">
+            <div class="label">Current Total (working tree)</div>
+            <div class="value">2,891</div>
+            <div class="sub">actual lines in tracked files right now</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Net from Diffs (added − removed)</div>
+            <div class="value">4,285</div>
+            <div class="sub">cumulative insertions minus deletions</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Total Added</div>
+            <div class="value" style="color:var(--accent2)">+4,660</div>
+            <div class="sub">across all commits</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Total Removed</div>
+            <div class="value" style="color:var(--danger)">−375</div>
+            <div class="sub">across all commits</div>
+        </div>
+    </div>
+    <div class="chart-row">
+        <div class="chart-box full">
+            <h3>Net Lines of Code over Time (cumulative insertions − deletions)</h3>
+            <canvas id="chart-loc"></canvas>
+        </div>
+    </div>
+    <h2 class="section-title">Notable Commits (Largest Changes)</h2>
+    <p style="color:var(--text2);font-size:.85rem;margin:-1rem 0 1rem;">
+        These commits had the biggest impact on lines of code — check these to understand sudden spikes or drops in the graph above.
+    </p>
+    <div class="table-wrap">
+    <table class="data-table">
+        <thead><tr>
+            <th>Hash</th><th>Date</th><th>Author</th>
+            <th class="num">Lines +</th><th class="num">Lines −</th>
+            <th class="num">Files</th><th>Message</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+            <td><code>3710b917</code></td>
+            <td>2008-06-28 07:43</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+1,455</td>
+            <td class="num del">-0</td>
+            <td class="num">12</td>
+            <td class="commit-msg">Revert to earlier behaviour when showing commands.</td>
+        </tr>
+        <tr>
+            <td><code>9df3f8e6</code></td>
+            <td>2007-09-13 16:40</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+1,408</td>
+            <td class="num del">-0</td>
+            <td class="num">9</td>
+            <td class="commit-msg">Added try/except to catch weird lines from git-log --shortstat.</td>
+        </tr>
+        <tr>
+            <td><code>1756f27c</code></td>
+            <td>2008-06-29 05:00</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+676</td>
+            <td class="num del">-2</td>
+            <td class="num">3</td>
+            <td class="commit-msg">License is GPLv2 / GPLv3.</td>
+        </tr>
+        <tr>
+            <td><code>7b61c4ba</code></td>
+            <td>2008-10-18 21:07</td>
+            <td>Tobias Gruetzmacher</td>
+            <td class="num add">+323</td>
+            <td class="num del">-0</td>
+            <td class="num">4</td>
+            <td class="commit-msg">Add sortable.js for sortable tables in output.</td>
+        </tr>
+        <tr>
+            <td><code>dffb3ca0</code></td>
+            <td>2010-01-16 13:21</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+36</td>
+            <td class="num del">-32</td>
+            <td class="num">1</td>
+            <td class="commit-msg">Cleanup: moved rest of the code to a new class.</td>
+        </tr>
+        <tr>
+            <td><code>e5fc428e</code></td>
+            <td>2010-01-09 23:34</td>
+            <td>Wulf C. Krueger</td>
+            <td class="num add">+58</td>
+            <td class="num del">-3</td>
+            <td class="num">1</td>
+            <td class="commit-msg">Add a graph for commits per domain.</td>
+        </tr>
+        <tr>
+            <td><code>faec0b49</code></td>
+            <td>2011-11-01 11:05</td>
+            <td>Christian Fufezan</td>
+            <td class="num add">+28</td>
+            <td class="num del">-25</td>
+            <td class="num">1</td>
+            <td class="commit-msg">gnuplot uses now svg as output. Can be switched to png or any other gn</td>
+        </tr>
+        <tr>
+            <td><code>3585ce76</code></td>
+            <td>2009-12-23 17:38</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+52</td>
+            <td class="num del">-0</td>
+            <td class="num">2</td>
+            <td class="commit-msg">Show weekly activity for last 32 weeks.</td>
+        </tr>
+        <tr>
+            <td><code>52a20a7b</code></td>
+            <td>2009-12-23 20:25</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+10</td>
+            <td class="num del">-40</td>
+            <td class="num">1</td>
+            <td class="commit-msg">Cleanup, use get(&#x27;foo&#x27;, 0) + 1 instead of if/else.</td>
+        </tr>
+        <tr>
+            <td><code>072723fb</code></td>
+            <td>2008-10-20 19:42</td>
+            <td>Tobias Gruetzmacher</td>
+            <td class="num add">+29</td>
+            <td class="num del">-16</td>
+            <td class="num">3</td>
+            <td class="commit-msg">Use sortable.js to sort some tables.</td>
+        </tr>
+        <tr>
+            <td><code>d4ae9a07</code></td>
+            <td>2010-01-11 17:35</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+21</td>
+            <td class="num del">-21</td>
+            <td class="num">1</td>
+            <td class="commit-msg">Moved &#x27;Commits by Domains&#x27; to &#x27;Authors&#x27; page.</td>
+        </tr>
+        <tr>
+            <td><code>0212bf1c</code></td>
+            <td>2009-06-18 18:07</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+26</td>
+            <td class="num del">-12</td>
+            <td class="num">2</td>
+            <td class="commit-msg">Tags: show commits &amp; authors for each tag.</td>
+        </tr>
+        <tr>
+            <td><code>87b85db7</code></td>
+            <td>2010-02-25 09:53</td>
+            <td>Dmitriy Novotochinov</td>
+            <td class="num add">+36</td>
+            <td class="num del">-0</td>
+            <td class="num">1</td>
+            <td class="commit-msg">added README.markdown</td>
+        </tr>
+        <tr>
+            <td><code>df24a48c</code></td>
+            <td>2010-01-16 14:07</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+26</td>
+            <td class="num del">-9</td>
+            <td class="num">1</td>
+            <td class="commit-msg">Allow overriding of some config variables.</td>
+        </tr>
+        <tr>
+            <td><code>be2cbda2</code></td>
+            <td>2008-06-28 08:14</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+12</td>
+            <td class="num del">-14</td>
+            <td class="num">1</td>
+            <td class="commit-msg">Use lists instead of tuples for better readability.</td>
+        </tr>
+        <tr>
+            <td><code>1f1e6447</code></td>
+            <td>2008-07-14 16:23</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+23</td>
+            <td class="num del">-0</td>
+            <td class="num">1</td>
+            <td class="commit-msg">DataCollertor learned loadCache() &amp; saveCache().</td>
+        </tr>
+        <tr>
+            <td><code>8542a238</code></td>
+            <td>2009-12-23 19:52</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+20</td>
+            <td class="num del">-2</td>
+            <td class="num">1</td>
+            <td class="commit-msg">Activity: added &#x27;Commits by Timezone&#x27;.</td>
+        </tr>
+        <tr>
+            <td><code>3a2b43e5</code></td>
+            <td>2009-12-13 11:30</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+21</td>
+            <td class="num del">-0</td>
+            <td class="num">1</td>
+            <td class="commit-msg">Added a Makefile with simple install target.</td>
+        </tr>
+        <tr>
+            <td><code>c5cdf575</code></td>
+            <td>2010-01-17 06:48</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+16</td>
+            <td class="num del">-4</td>
+            <td class="num">2</td>
+            <td class="commit-msg">Limit author table to 20, and list only name for rest.</td>
+        </tr>
+        <tr>
+            <td><code>0fd5e201</code></td>
+            <td>2008-11-22 08:10</td>
+            <td>Heikki Hokkanen</td>
+            <td class="num add">+10</td>
+            <td class="num del">-10</td>
+            <td class="num">1</td>
+            <td class="commit-msg">s/git-/git /.</td>
+        </tr></tbody>
+    </table>
+    </div>
+</div>
+
+<!-- ═══════ TAGS ═══════ -->
+<div id="sec-tags" class="section">
+    <h2 class="section-title">Tags (0)</h2>
+    <div class="table-wrap">
+    <table class="data-table">
+        <thead><tr><th>Tag</th><th>Date</th><th>Subject</th></tr></thead>
+        <tbody><tr><td colspan="3" style="color:var(--text2)">No tags found</td></tr></tbody>
+    </table>
+    </div>
+</div>
+
+<footer>Generated by gitstats.py — a modern git statistics generator</footer>
+
+</div>
+
+<script>
+const D = {"hourOfDay": [0, 0, 2, 0, 1, 2, 2, 7, 11, 12, 8, 6, 12, 5, 4, 6, 14, 6, 5, 2, 4, 1, 0, 1], "dayOfWeek": [9, 11, 14, 15, 21, 26, 15], "monthOfYear": [25, 4, 2, 0, 1, 16, 4, 0, 6, 15, 7, 31], "yearMonth": {"labels": ["2007-09", "2008-06", "2008-07", "2008-09", "2008-10", "2008-11", "2008-12", "2009-01", "2009-05", "2009-06", "2009-09", "2009-10", "2009-11", "2009-12", "2010-01", "2010-02", "2011-11", "2012-01", "2012-02", "2012-03", "2013-02", "2015-09", "2015-10"], "values": [2, 8, 4, 1, 4, 4, 4, 3, 1, 8, 1, 3, 1, 27, 18, 2, 2, 4, 1, 2, 1, 2, 8]}, "yearly": {"labels": ["2007", "2008", "2009", "2010", "2011", "2012", "2013", "2015"], "values": [2, 25, 44, 20, 2, 7, 1, 10]}, "locOverTime": {"labels": ["2007-09", "2008-06", "2008-07", "2008-09", "2008-10", "2008-11", "2008-12", "2009-01", "2009-05", "2009-06", "2009-09", "2009-10", "2009-11", "2009-12", "2010-01", "2010-02", "2011-11", "2012-01", "2012-02", "2012-03", "2013-02", "2015-09", "2015-10"], "values": [1408, 3525, 3561, 3561, 3895, 3900, 3914, 3925, 3925, 3948, 3954, 3958, 3959, 4096, 4209, 4246, 4249, 4255, 4255, 4256, 4257, 4269, 4285]}, "filesOverTime": {"labels": ["2007-09", "2008-06", "2008-07", "2008-09", "2008-10", "2008-11", "2008-12", "2009-01", "2009-05", "2009-06", "2009-09", "2009-10", "2009-11", "2009-12", "2010-01", "2010-02", "2011-11", "2012-01", "2012-02", "2012-03", "2013-02", "2015-09", "2015-10"], "values": [9, 9, 9, 9, 13, 13, 13, 13, 13, 13, 13, 13, 13, 14, 14, 16, 16, 16, 16, 17, 17, 17, 17]}, "topAuthors": [{"name": "Heikki Hokkanen", "commits": 81}, {"name": "Dmitry Novotochinov", "commits": 9}, {"name": ".", "commits": 8}, {"name": "Wulf C. Krueger", "commits": 4}, {"name": "Tobias Gruetzmacher", "commits": 3}, {"name": "Christian Fufezan", "commits": 2}, {"name": "Dmitriy Novotochinov", "commits": 2}, {"name": "Toon Schoenmakers", "commits": 1}, {"name": "Matt Parlane", "commits": 1}], "heatmap": [{"hour": 0, "dow": 0, "count": 0}, {"hour": 1, "dow": 0, "count": 0}, {"hour": 2, "dow": 0, "count": 0}, {"hour": 3, "dow": 0, "count": 0}, {"hour": 4, "dow": 0, "count": 0}, {"hour": 5, "dow": 0, "count": 0}, {"hour": 6, "dow": 0, "count": 0}, {"hour": 7, "dow": 0, "count": 0}, {"hour": 8, "dow": 0, "count": 0}, {"hour": 9, "dow": 0, "count": 0}, {"hour": 10, "dow": 0, "count": 0}, {"hour": 11, "dow": 0, "count": 0}, {"hour": 12, "dow": 0, "count": 0}, {"hour": 13, "dow": 0, "count": 0}, {"hour": 14, "dow": 0, "count": 0}, {"hour": 15, "dow": 0, "count": 1}, {"hour": 16, "dow": 0, "count": 4}, {"hour": 17, "dow": 0, "count": 2}, {"hour": 18, "dow": 0, "count": 1}, {"hour": 19, "dow": 0, "count": 1}, {"hour": 20, "dow": 0, "count": 0}, {"hour": 21, "dow": 0, "count": 0}, {"hour": 22, "dow": 0, "count": 0}, {"hour": 23, "dow": 0, "count": 0}, {"hour": 0, "dow": 1, "count": 0}, {"hour": 1, "dow": 1, "count": 0}, {"hour": 2, "dow": 1, "count": 0}, {"hour": 3, "dow": 1, "count": 0}, {"hour": 4, "dow": 1, "count": 0}, {"hour": 5, "dow": 1, "count": 0}, {"hour": 6, "dow": 1, "count": 0}, {"hour": 7, "dow": 1, "count": 4}, {"hour": 8, "dow": 1, "count": 0}, {"hour": 9, "dow": 1, "count": 0}, {"hour": 10, "dow": 1, "count": 1}, {"hour": 11, "dow": 1, "count": 1}, {"hour": 12, "dow": 1, "count": 0}, {"hour": 13, "dow": 1, "count": 2}, {"hour": 14, "dow": 1, "count": 1}, {"hour": 15, "dow": 1, "count": 0}, {"hour": 16, "dow": 1, "count": 1}, {"hour": 17, "dow": 1, "count": 0}, {"hour": 18, "dow": 1, "count": 1}, {"hour": 19, "dow": 1, "count": 0}, {"hour": 20, "dow": 1, "count": 0}, {"hour": 21, "dow": 1, "count": 0}, {"hour": 22, "dow": 1, "count": 0}, {"hour": 23, "dow": 1, "count": 0}, {"hour": 0, "dow": 2, "count": 0}, {"hour": 1, "dow": 2, "count": 0}, {"hour": 2, "dow": 2, "count": 0}, {"hour": 3, "dow": 2, "count": 0}, {"hour": 4, "dow": 2, "count": 0}, {"hour": 5, "dow": 2, "count": 0}, {"hour": 6, "dow": 2, "count": 0}, {"hour": 7, "dow": 2, "count": 0}, {"hour": 8, "dow": 2, "count": 0}, {"hour": 9, "dow": 2, "count": 0}, {"hour": 10, "dow": 2, "count": 0}, {"hour": 11, "dow": 2, "count": 0}, {"hour": 12, "dow": 2, "count": 0}, {"hour": 13, "dow": 2, "count": 0}, {"hour": 14, "dow": 2, "count": 0}, {"hour": 15, "dow": 2, "count": 4}, {"hour": 16, "dow": 2, "count": 4}, {"hour": 17, "dow": 2, "count": 2}, {"hour": 18, "dow": 2, "count": 1}, {"hour": 19, "dow": 2, "count": 1}, {"hour": 20, "dow": 2, "count": 2}, {"hour": 21, "dow": 2, "count": 0}, {"hour": 22, "dow": 2, "count": 0}, {"hour": 23, "dow": 2, "count": 0}, {"hour": 0, "dow": 3, "count": 0}, {"hour": 1, "dow": 3, "count": 0}, {"hour": 2, "dow": 3, "count": 0}, {"hour": 3, "dow": 3, "count": 0}, {"hour": 4, "dow": 3, "count": 0}, {"hour": 5, "dow": 3, "count": 0}, {"hour": 6, "dow": 3, "count": 0}, {"hour": 7, "dow": 3, "count": 0}, {"hour": 8, "dow": 3, "count": 3}, {"hour": 9, "dow": 3, "count": 5}, {"hour": 10, "dow": 3, "count": 0}, {"hour": 11, "dow": 3, "count": 0}, {"hour": 12, "dow": 3, "count": 0}, {"hour": 13, "dow": 3, "count": 0}, {"hour": 14, "dow": 3, "count": 0}, {"hour": 15, "dow": 3, "count": 1}, {"hour": 16, "dow": 3, "count": 2}, {"hour": 17, "dow": 3, "count": 2}, {"hour": 18, "dow": 3, "count": 2}, {"hour": 19, "dow": 3, "count": 0}, {"hour": 20, "dow": 3, "count": 0}, {"hour": 21, "dow": 3, "count": 0}, {"hour": 22, "dow": 3, "count": 0}, {"hour": 23, "dow": 3, "count": 0}, {"hour": 0, "dow": 4, "count": 0}, {"hour": 1, "dow": 4, "count": 0}, {"hour": 2, "dow": 4, "count": 2}, {"hour": 3, "dow": 4, "count": 0}, {"hour": 4, "dow": 4, "count": 0}, {"hour": 5, "dow": 4, "count": 0}, {"hour": 6, "dow": 4, "count": 0}, {"hour": 7, "dow": 4, "count": 0}, {"hour": 8, "dow": 4, "count": 0}, {"hour": 9, "dow": 4, "count": 5}, {"hour": 10, "dow": 4, "count": 2}, {"hour": 11, "dow": 4, "count": 0}, {"hour": 12, "dow": 4, "count": 8}, {"hour": 13, "dow": 4, "count": 0}, {"hour": 14, "dow": 4, "count": 1}, {"hour": 15, "dow": 4, "count": 0}, {"hour": 16, "dow": 4, "count": 1}, {"hour": 17, "dow": 4, "count": 0}, {"hour": 18, "dow": 4, "count": 0}, {"hour": 19, "dow": 4, "count": 0}, {"hour": 20, "dow": 4, "count": 2}, {"hour": 21, "dow": 4, "count": 0}, {"hour": 22, "dow": 4, "count": 0}, {"hour": 23, "dow": 4, "count": 0}, {"hour": 0, "dow": 5, "count": 0}, {"hour": 1, "dow": 5, "count": 0}, {"hour": 2, "dow": 5, "count": 0}, {"hour": 3, "dow": 5, "count": 0}, {"hour": 4, "dow": 5, "count": 0}, {"hour": 5, "dow": 5, "count": 0}, {"hour": 6, "dow": 5, "count": 0}, {"hour": 7, "dow": 5, "count": 1}, {"hour": 8, "dow": 5, "count": 8}, {"hour": 9, "dow": 5, "count": 2}, {"hour": 10, "dow": 5, "count": 4}, {"hour": 11, "dow": 5, "count": 1}, {"hour": 12, "dow": 5, "count": 4}, {"hour": 13, "dow": 5, "count": 3}, {"hour": 14, "dow": 5, "count": 1}, {"hour": 15, "dow": 5, "count": 0}, {"hour": 16, "dow": 5, "count": 0}, {"hour": 17, "dow": 5, "count": 0}, {"hour": 18, "dow": 5, "count": 0}, {"hour": 19, "dow": 5, "count": 0}, {"hour": 20, "dow": 5, "count": 0}, {"hour": 21, "dow": 5, "count": 1}, {"hour": 22, "dow": 5, "count": 0}, {"hour": 23, "dow": 5, "count": 1}, {"hour": 0, "dow": 6, "count": 0}, {"hour": 1, "dow": 6, "count": 0}, {"hour": 2, "dow": 6, "count": 0}, {"hour": 3, "dow": 6, "count": 0}, {"hour": 4, "dow": 6, "count": 1}, {"hour": 5, "dow": 6, "count": 2}, {"hour": 6, "dow": 6, "count": 2}, {"hour": 7, "dow": 6, "count": 2}, {"hour": 8, "dow": 6, "count": 0}, {"hour": 9, "dow": 6, "count": 0}, {"hour": 10, "dow": 6, "count": 1}, {"hour": 11, "dow": 6, "count": 4}, {"hour": 12, "dow": 6, "count": 0}, {"hour": 13, "dow": 6, "count": 0}, {"hour": 14, "dow": 6, "count": 1}, {"hour": 15, "dow": 6, "count": 0}, {"hour": 16, "dow": 6, "count": 2}, {"hour": 17, "dow": 6, "count": 0}, {"hour": 18, "dow": 6, "count": 0}, {"hour": 19, "dow": 6, "count": 0}, {"hour": 20, "dow": 6, "count": 0}, {"hour": 21, "dow": 6, "count": 0}, {"hour": 22, "dow": 6, "count": 0}, {"hour": 23, "dow": 6, "count": 0}], "allMonths": ["2007-09", "2008-06", "2008-07", "2008-09", "2008-10", "2008-11", "2008-12", "2009-01", "2009-05", "2009-06", "2009-09", "2009-10", "2009-11", "2009-12", "2010-01", "2010-02", "2011-11", "2012-01", "2012-02", "2012-03", "2013-02", "2015-09", "2015-10"], "authorDetails": [{"name": "Heikki Hokkanen", "commits": 81, "insertions": 4105, "deletions": 294, "mc": [2, 8, 4, 0, 2, 4, 4, 3, 0, 8, 1, 3, 1, 27, 14, 0, 0, 0, 0, 0, 0, 0, 0], "mi": [1409, 2162, 50, 0, 2, 23, 24, 16, 0, 50, 8, 10, 1, 218, 132, 0, 0, 0, 0, 0, 0, 0, 0], "md": [1, 45, 14, 0, 4, 18, 10, 5, 0, 27, 2, 6, 0, 81, 81, 0, 0, 0, 0, 0, 0, 0, 0]}, {"name": "Dmitry Novotochinov", "commits": 9, "insertions": 25, "deletions": 5, "mc": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 2, 1, 2, 0], "mi": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 0, 2, 2, 14, 0], "md": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 2, 0]}, {"name": ".", "commits": 8, "insertions": 36, "deletions": 20, "mc": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8], "mi": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 36], "md": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20]}, {"name": "Wulf C. Krueger", "commits": 4, "insertions": 67, "deletions": 5, "mc": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0], "mi": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 67, 0, 0, 0, 0, 0, 0, 0, 0], "md": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0, 0]}, {"name": "Tobias Gruetzmacher", "commits": 3, "insertions": 353, "deletions": 17, "mc": [0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "mi": [0, 0, 0, 1, 352, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "md": [0, 0, 0, 1, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}, {"name": "Christian Fufezan", "commits": 2, "insertions": 29, "deletions": 26, "mc": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0], "mi": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 29, 0, 0, 0, 0, 0, 0], "md": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 26, 0, 0, 0, 0, 0, 0]}, {"name": "Dmitriy Novotochinov", "commits": 2, "insertions": 37, "deletions": 0, "mc": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0], "mi": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 37, 0, 0, 0, 0, 0, 0, 0], "md": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}, {"name": "Toon Schoenmakers", "commits": 1, "insertions": 6, "deletions": 6, "mc": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0], "mi": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0], "md": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0]}, {"name": "Matt Parlane", "commits": 1, "insertions": 2, "deletions": 2, "mc": [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "mi": [0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "md": [0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}], "authorActivity": {"Heikki Hokkanen": {"hour": [0, 0, 0, 0, 1, 2, 2, 7, 11, 10, 1, 5, 4, 5, 2, 6, 10, 6, 4, 1, 4, 0, 0, 0], "dow": [8, 7, 14, 13, 7, 21, 11]}, "Dmitry Novotochinov": {"hour": [0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0], "dow": [0, 1, 0, 0, 5, 3, 0]}, ".": {"hour": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "dow": [0, 0, 0, 0, 8, 0, 0]}, "Wulf C. Krueger": {"hour": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 0, 1], "dow": [0, 0, 0, 0, 1, 1, 2]}, "Tobias Gruetzmacher": {"hour": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0], "dow": [1, 0, 0, 0, 0, 1, 1]}, "Christian Fufezan": {"hour": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "dow": [0, 2, 0, 0, 0, 0, 0]}, "Dmitriy Novotochinov": {"hour": [0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "dow": [0, 0, 0, 2, 0, 0, 0]}, "Toon Schoenmakers": {"hour": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0], "dow": [0, 1, 0, 0, 0, 0, 0]}, "Matt Parlane": {"hour": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], "dow": [0, 0, 0, 0, 0, 0, 1]}}};
+
+// ── Nav ──
+document.querySelectorAll('nav a').forEach(a => {
+    a.addEventListener('click', () => {
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.querySelectorAll('nav a').forEach(b => b.classList.remove('active'));
+        document.getElementById('sec-' + a.dataset.sec).classList.add('active');
+        a.classList.add('active');
+        if (!window._ci) initCharts();
+        if (a.dataset.sec === 'contributions' && !window._coi) initContributions();
+    });
+});
+
+// ── Chart.js defaults ──
+const C = {
+    blue:'#58a6ff', green:'#3fb950', purple:'#d2a8ff',
+    orange:'#f78166', yellow:'#ffa657', cyan:'#56d4dd',
+    pink:'#f778ba', red:'#f85149'
+};
+const CL = Object.values(C);
+
+Chart.defaults.color = '#8b949e';
+Chart.defaults.borderColor = '#30363d';
+Chart.defaults.font.family = "'JetBrains Mono', monospace";
+Chart.defaults.font.size = 11;
+Chart.defaults.plugins.legend.display = false;
+Chart.defaults.animation.duration = 600;
+Chart.defaults.plugins.tooltip.enabled = true;
+Chart.defaults.plugins.tooltip.backgroundColor = '#1c2333ee';
+Chart.defaults.plugins.tooltip.titleColor = '#e6edf3';
+Chart.defaults.plugins.tooltip.bodyColor = '#e6edf3';
+Chart.defaults.plugins.tooltip.borderColor = '#30363d';
+Chart.defaults.plugins.tooltip.borderWidth = 1;
+Chart.defaults.plugins.tooltip.cornerRadius = 6;
+Chart.defaults.plugins.tooltip.padding = 10;
+Chart.defaults.plugins.tooltip.titleFont = { family: "'JetBrains Mono', monospace", size: 11 };
+Chart.defaults.plugins.tooltip.bodyFont = { family: "'JetBrains Mono', monospace", size: 12 };
+
+function bO() {
+    return {
+        responsive: true, maintainAspectRatio: true, aspectRatio: 2,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { tooltip: { callbacks: {
+            label: c => (c.dataset.label || '') + (c.dataset.label ? ': ' : '') + c.parsed.y.toLocaleString()
+        } } },
+        scales: {
+            x: { grid: { display: false } },
+            y: { grid: { color: '#30363d22' }, ticks: { callback: v => v.toLocaleString() } }
+        }
+    };
+}
+function lO() {
+    return {
+        responsive: true, maintainAspectRatio: true, aspectRatio: 2.5,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { tooltip: { callbacks: {
+            label: c => {
+                const l = c.dataset.label || '';
+                return (l ? l + ': ' : '') + c.parsed.y.toLocaleString();
+            }
+        } } },
+        elements: { point: { radius: 0, hoverRadius: 5, hoverBackgroundColor: '#fff' }, line: { tension: 0.3, borderWidth: 2 } },
+        scales: {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: 20 } },
+            y: { grid: { color: '#30363d22' }, beginAtZero: true, ticks: { callback: v => v.toLocaleString() } }
+        }
+    };
+}
+
+let aHC = null, aDC = null;
+
+function updateAuthorActivity(name) {
+    const d = D.authorActivity[name];
+    if (!d) return;
+    const dow = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    if (aHC) aHC.destroy();
+    if (aDC) aDC.destroy();
+    document.getElementById('author-hour-title').textContent = name + ' — Hour of Day';
+    document.getElementById('author-dow-title').textContent = name + ' — Day of Week';
+    aHC = new Chart('chart-author-hour', {
+        type: 'bar',
+        data: { labels: Array.from({length:24}, (_,i) => i+'h'), datasets: [{ data: d.hour, backgroundColor: C.purple+'99', borderRadius: 3 }] },
+        options: bO()
+    });
+    aDC = new Chart('chart-author-dow', {
+        type: 'bar',
+        data: { labels: dow, datasets: [{ data: d.dow, backgroundColor: C.orange+'99', borderRadius: 3 }] },
+        options: bO()
+    });
+}
+
+function initCharts() {
+    window._ci = true;
+    const dow = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    new Chart('chart-hour', { type:'bar', data:{ labels:Array.from({length:24},(_,i)=>i+'h'), datasets:[{ data:D.hourOfDay, backgroundColor:C.blue+'99', borderRadius:3 }] }, options:bO() });
+    new Chart('chart-dow', { type:'bar', data:{ labels:dow, datasets:[{ data:D.dayOfWeek, backgroundColor:C.green+'99', borderRadius:3 }] }, options:bO() });
+    new Chart('chart-month', { type:'bar', data:{ labels:mon, datasets:[{ data:D.monthOfYear, backgroundColor:C.purple+'99', borderRadius:3 }] }, options:bO() });
+    new Chart('chart-year', { type:'bar', data:{ labels:D.yearly.labels, datasets:[{ data:D.yearly.values, backgroundColor:C.orange+'99', borderRadius:3 }] }, options:bO() });
+
+    new Chart('chart-ym', { type:'line', data:{ labels:D.yearMonth.labels, datasets:[{ label:'Commits', data:D.yearMonth.values, borderColor:C.blue, backgroundColor:C.blue+'18', fill:true }] }, options:lO() });
+
+    const aN = D.topAuthors.map(a => a.name.length>20 ? a.name.slice(0,18)+'…' : a.name);
+    new Chart('chart-authors', { type:'bar', data:{ labels:aN, datasets:[{ data:D.topAuthors.map(a=>a.commits), backgroundColor:D.topAuthors.map((_,i)=>CL[i%CL.length]+'cc'), borderRadius:3 }] }, options:bO() });
+
+    new Chart('chart-files-time', { type:'line', data:{ labels:D.filesOverTime.labels, datasets:[{ label:'Files', data:D.filesOverTime.values, borderColor:C.cyan, backgroundColor:C.cyan+'18', fill:true }] }, options:lO() });
+    new Chart('chart-loc', { type:'line', data:{ labels:D.locOverTime.labels, datasets:[{ label:'Net LOC', data:D.locOverTime.values, borderColor:C.green, backgroundColor:C.green+'18', fill:true }] }, options:lO() });
+
+    // Heatmap
+    const hm = document.getElementById('heatmap');
+    const mx = Math.max(...D.heatmap.map(h=>h.count), 1);
+    for (let d=0; d<7; d++) {
+        const lb = document.createElement('div'); lb.className='label'; lb.textContent=dow[d]; hm.appendChild(lb);
+        for (let h=0; h<24; h++) {
+            const e = D.heatmap.find(x=>x.dow===d&&x.hour===h);
+            const cnt = e?e.count:0;
+            const cl = document.createElement('div'); cl.className='cell';
+            cl.title = dow[d]+' '+h+':00 — '+cnt+' commits';
+            cl.style.background = cnt===0 ? '#21262d' : 'rgba(88,166,255,'+(0.2+cnt/mx*0.8)+')';
+            hm.appendChild(cl);
+        }
+    }
+
+    const sel = document.getElementById('author-activity-select');
+    if (sel && sel.options.length) {
+        updateAuthorActivity(sel.value);
+        sel.addEventListener('change', () => updateAuthorActivity(sel.value));
+    }
+}
+
+// ── Contributions tab ──
+let cCharts = {};
+
+function initContributions() {
+    window._coi = true;
+    renderContrib();
+    document.querySelectorAll('#contrib-metric button').forEach(b => {
+        b.addEventListener('click', () => {
+            document.querySelectorAll('#contrib-metric button').forEach(x=>x.classList.remove('active'));
+            b.classList.add('active'); renderContrib();
+        });
+    });
+    document.querySelectorAll('#contrib-sort button').forEach(b => {
+        b.addEventListener('click', () => {
+            document.querySelectorAll('#contrib-sort button').forEach(x=>x.classList.remove('active'));
+            b.classList.add('active'); renderContrib();
+        });
+    });
+    document.getElementById('contrib-range').addEventListener('change', () => renderContrib());
+}
+
+function renderContrib() {
+    const metric = document.querySelector('#contrib-metric button.active').dataset.metric;
+    const sortBy = document.querySelector('#contrib-sort button.active').dataset.sort;
+    const range = document.getElementById('contrib-range').value;
+    const aM = D.allMonths;
+    let si = 0;
+    if (range !== 'all' && aM.length) si = Math.max(0, aM.length - parseInt(range));
+    const vm = aM.slice(si);
+
+    let authors = D.authorDetails.map((a,idx) => {
+        const mc=a.mc.slice(si), mi=a.mi.slice(si), md=a.md.slice(si);
+        return { ...a, mc, mi, md, tC:mc.reduce((s,v)=>s+v,0), tI:mi.reduce((s,v)=>s+v,0), tD:md.reduce((s,v)=>s+v,0), idx };
+    });
+
+    if (sortBy === 'recent') {
+        const l3 = Math.max(0, vm.length-3);
+        const k = metric==='commits'?'mc':metric==='additions'?'mi':'md';
+        authors.sort((a,b) => b[k].slice(l3).reduce((s,v)=>s+v,0) - a[k].slice(l3).reduce((s,v)=>s+v,0));
+    } else {
+        const k = metric==='commits'?'tC':metric==='additions'?'tI':'tD';
+        authors.sort((a,b) => b[k]-a[k]);
+    }
+
+    Object.values(cCharts).forEach(ch=>ch.destroy());
+    cCharts = {};
+    const container = document.getElementById('contrib-cards');
+    container.innerHTML = '';
+
+    authors.forEach((a, rank) => {
+        const data = metric==='commits'?a.mc:metric==='additions'?a.mi:a.md;
+        const total = data.reduce((s,v)=>s+v,0);
+        if (total===0) return;
+        const color = metric==='commits'?C.blue:metric==='additions'?C.green:C.red;
+        const ml = metric==='commits'?'commits':metric==='additions'?'lines added':'lines removed';
+
+        const card = document.createElement('div');
+        card.className = 'contrib-card';
+        card.innerHTML = `
+            <div class="card-header">
+                <div class="author-info">
+                    <span class="rank">#${rank+1}</span>
+                    <span class="name">${a.name}</span>
+                </div>
+                <div class="stat-pills">
+                    <span class="pill commits">${a.tC.toLocaleString()} commits</span>
+                    <span class="pill add">+${a.tI.toLocaleString()}</span>
+                    <span class="pill del">-${a.tD.toLocaleString()}</span>
+                </div>
+            </div>
+            <canvas id="cc-${rank}"></canvas>
+        `;
+        container.appendChild(card);
+
+        cCharts['c'+rank] = new Chart('cc-'+rank, {
+            type: 'bar',
+            data: {
+                labels: vm,
+                datasets: [{
+                    label: a.name + ' — ' + ml,
+                    data: data,
+                    backgroundColor: color+'88',
+                    borderColor: color,
+                    borderWidth: 1,
+                    borderRadius: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                aspectRatio: 8,
+                interaction: { mode:'index', intersect:false },
+                plugins: { tooltip: { callbacks: {
+                    label: c => c.dataset.label+': '+c.parsed.y.toLocaleString()
+                } } },
+                scales: {
+                    x: { grid:{ display:false }, ticks:{ maxTicksLimit:15, font:{ size:9 } } },
+                    y: { grid:{ color:'#30363d22' }, beginAtZero:true, ticks:{ callback:v=>v.toLocaleString() } }
+                }
+            }
+        });
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => { initCharts(); });
+</script>
+</body>
+</html>

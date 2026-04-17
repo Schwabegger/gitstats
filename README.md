@@ -44,7 +44,23 @@ A single `index.html` file in the output directory. Open it in any modern browse
 
 ## Screenshots
 
-> Screenshots coming soon. Run the tool on your own repo to see the output.
+**General** — summary stats and recent commits
+![General](docs/screenshot-general.png)
+
+**Activity** — hour/day/month charts and heatmap
+![Activity](docs/screenshot-activity.png)
+
+**Authors** — ranked table with commit and line stats
+![Authors](docs/screenshot-authors.png)
+
+**Contributions** — per-author monthly bar charts with filters
+![Contributions](docs/screenshot-contributions.png)
+
+**Files** — file count over time and extension breakdown
+![Files](docs/screenshot-files.png)
+
+**Lines** — net LOC over time and notable large commits
+![Lines](docs/screenshot-lines.png)
 
 ## License
 
