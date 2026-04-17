@@ -1132,14 +1132,15 @@ footer {{
 const D = {chart_data};
 
 // ── Nav ──
+const _init = {{}};
 document.querySelectorAll('nav a').forEach(a => {{
     a.addEventListener('click', () => {{
         document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
         document.querySelectorAll('nav a').forEach(b => b.classList.remove('active'));
         document.getElementById('sec-' + a.dataset.sec).classList.add('active');
         a.classList.add('active');
-        if (!window._ci) initCharts();
-        if (a.dataset.sec === 'contributions' && !window._coi) initContributions();
+        const sec = a.dataset.sec;
+        if (!_init[sec]) {{ _init[sec] = true; sectionInits[sec] && sectionInits[sec](); }}
     }});
 }});
 
@@ -1221,51 +1222,53 @@ function updateAuthorActivity(name) {{
     }});
 }}
 
-function initCharts() {{
-    window._ci = true;
-    const dow = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-    const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-    new Chart('chart-hour', {{ type:'bar', data:{{ labels:Array.from({{length:24}},(_,i)=>i+'h'), datasets:[{{ data:D.hourOfDay, backgroundColor:C.blue+'99', borderRadius:3 }}] }}, options:bO() }});
-    new Chart('chart-dow', {{ type:'bar', data:{{ labels:dow, datasets:[{{ data:D.dayOfWeek, backgroundColor:C.green+'99', borderRadius:3 }}] }}, options:bO() }});
-    new Chart('chart-month', {{ type:'bar', data:{{ labels:mon, datasets:[{{ data:D.monthOfYear, backgroundColor:C.purple+'99', borderRadius:3 }}] }}, options:bO() }});
-    new Chart('chart-year', {{ type:'bar', data:{{ labels:D.yearly.labels, datasets:[{{ data:D.yearly.values, backgroundColor:C.orange+'99', borderRadius:3 }}] }}, options:bO() }});
-
-    new Chart('chart-ym', {{ type:'line', data:{{ labels:D.yearMonth.labels, datasets:[{{ label:'Commits', data:D.yearMonth.values, borderColor:C.blue, backgroundColor:C.blue+'18', fill:true }}] }}, options:lO() }});
-
-    const aN = D.topAuthors.map(a => a.name.length>20 ? a.name.slice(0,18)+'…' : a.name);
-    new Chart('chart-authors', {{ type:'bar', data:{{ labels:aN, datasets:[{{ data:D.topAuthors.map(a=>a.commits), backgroundColor:D.topAuthors.map((_,i)=>CL[i%CL.length]+'cc'), borderRadius:3 }}] }}, options:bO() }});
-
-    new Chart('chart-files-time', {{ type:'line', data:{{ labels:D.filesOverTime.labels, datasets:[{{ label:'Files', data:D.filesOverTime.values, borderColor:C.cyan, backgroundColor:C.cyan+'18', fill:true }}] }}, options:lO() }});
-    new Chart('chart-loc', {{ type:'line', data:{{ labels:D.locOverTime.labels, datasets:[{{ label:'Net LOC', data:D.locOverTime.values, borderColor:C.green, backgroundColor:C.green+'18', fill:true }}] }}, options:lO() }});
-
-    // Heatmap
-    const hm = document.getElementById('heatmap');
-    const mx = Math.max(...D.heatmap.map(h=>h.count), 1);
-    for (let d=0; d<7; d++) {{
-        const lb = document.createElement('div'); lb.className='label'; lb.textContent=dow[d]; hm.appendChild(lb);
-        for (let h=0; h<24; h++) {{
-            const e = D.heatmap.find(x=>x.dow===d&&x.hour===h);
-            const cnt = e?e.count:0;
-            const cl = document.createElement('div'); cl.className='cell';
-            cl.title = dow[d]+' '+h+':00 — '+cnt+' commits';
-            cl.style.background = cnt===0 ? '#21262d' : 'rgba(88,166,255,'+(0.2+cnt/mx*0.8)+')';
-            hm.appendChild(cl);
+const sectionInits = {{
+    activity: function() {{
+        const dow = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+        const mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        new Chart('chart-hour', {{ type:'bar', data:{{ labels:Array.from({{length:24}},(_,i)=>i+'h'), datasets:[{{ data:D.hourOfDay, backgroundColor:C.blue+'99', borderRadius:3 }}] }}, options:bO() }});
+        new Chart('chart-dow', {{ type:'bar', data:{{ labels:dow, datasets:[{{ data:D.dayOfWeek, backgroundColor:C.green+'99', borderRadius:3 }}] }}, options:bO() }});
+        new Chart('chart-month', {{ type:'bar', data:{{ labels:mon, datasets:[{{ data:D.monthOfYear, backgroundColor:C.purple+'99', borderRadius:3 }}] }}, options:bO() }});
+        new Chart('chart-year', {{ type:'bar', data:{{ labels:D.yearly.labels, datasets:[{{ data:D.yearly.values, backgroundColor:C.orange+'99', borderRadius:3 }}] }}, options:bO() }});
+        new Chart('chart-ym', {{ type:'line', data:{{ labels:D.yearMonth.labels, datasets:[{{ label:'Commits', data:D.yearMonth.values, borderColor:C.blue, backgroundColor:C.blue+'18', fill:true }}] }}, options:lO() }});
+        // Heatmap
+        const hm = document.getElementById('heatmap');
+        const mx = Math.max(...D.heatmap.map(h=>h.count), 1);
+        for (let d=0; d<7; d++) {{
+            const lb = document.createElement('div'); lb.className='label'; lb.textContent=dow[d]; hm.appendChild(lb);
+            for (let h=0; h<24; h++) {{
+                const e = D.heatmap.find(x=>x.dow===d&&x.hour===h);
+                const cnt = e?e.count:0;
+                const cl = document.createElement('div'); cl.className='cell';
+                cl.title = dow[d]+' '+h+':00 — '+cnt+' commits';
+                cl.style.background = cnt===0 ? '#21262d' : 'rgba(88,166,255,'+(0.2+cnt/mx*0.8)+')';
+                hm.appendChild(cl);
+            }}
         }}
-    }}
+        const sel = document.getElementById('author-activity-select');
+        if (sel && sel.options.length) {{
+            updateAuthorActivity(sel.value);
+            sel.addEventListener('change', () => updateAuthorActivity(sel.value));
+        }}
+    }},
+    authors: function() {{
+        const aN = D.topAuthors.map(a => a.name.length>20 ? a.name.slice(0,18)+'…' : a.name);
+        new Chart('chart-authors', {{ type:'bar', data:{{ labels:aN, datasets:[{{ data:D.topAuthors.map(a=>a.commits), backgroundColor:D.topAuthors.map((_,i)=>CL[i%CL.length]+'cc'), borderRadius:3 }}] }}, options:bO() }});
+    }},
+    files: function() {{
+        new Chart('chart-files-time', {{ type:'line', data:{{ labels:D.filesOverTime.labels, datasets:[{{ label:'Files', data:D.filesOverTime.values, borderColor:C.cyan, backgroundColor:C.cyan+'18', fill:true }}] }}, options:lO() }});
+    }},
+    lines: function() {{
+        new Chart('chart-loc', {{ type:'line', data:{{ labels:D.locOverTime.labels, datasets:[{{ label:'Net LOC', data:D.locOverTime.values, borderColor:C.green, backgroundColor:C.green+'18', fill:true }}] }}, options:lO() }});
+    }},
+    contributions: function() {{ initContributions(); }},
+}};
 
-    const sel = document.getElementById('author-activity-select');
-    if (sel && sel.options.length) {{
-        updateAuthorActivity(sel.value);
-        sel.addEventListener('change', () => updateAuthorActivity(sel.value));
-    }}
-}}
 
 // ── Contributions tab ──
 let cCharts = {{}};
 
 function initContributions() {{
-    window._coi = true;
     renderContrib();
     document.querySelectorAll('#contrib-metric button').forEach(b => {{
         b.addEventListener('click', () => {{
@@ -1365,7 +1368,9 @@ function renderContrib() {{
     }});
 }}
 
-document.addEventListener('DOMContentLoaded', () => {{ initCharts(); }});
+document.addEventListener('DOMContentLoaded', () => {{
+    _init['general'] = true;
+}});
 </script>
 </body>
 </html>"""
