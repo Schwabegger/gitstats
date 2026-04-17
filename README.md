@@ -44,23 +44,47 @@ A single `index.html` file in the output directory. Open it in any modern browse
 
 ## Screenshots
 
-**General** — summary stats and recent commits
+<details>
+<summary>General — summary stats and recent commits</summary>
+
 ![General](docs/screenshot-general.png)
 
-**Activity** — hour/day/month charts and heatmap
+</details>
+
+<details>
+<summary>Activity — hour/day/month charts and heatmap</summary>
+
 ![Activity](docs/screenshot-activity.png)
 
-**Authors** — ranked table with commit and line stats
+</details>
+
+<details>
+<summary>Authors — ranked table with commit and line stats</summary>
+
 ![Authors](docs/screenshot-authors.png)
 
-**Contributions** — per-author monthly bar charts with filters
+</details>
+
+<details>
+<summary>Contributions — per-author monthly bar charts with filters</summary>
+
 ![Contributions](docs/screenshot-contributions.png)
 
-**Files** — file count over time and extension breakdown
+</details>
+
+<details>
+<summary>Files — file count over time and extension breakdown</summary>
+
 ![Files](docs/screenshot-files.png)
 
-**Lines** — net LOC over time and notable large commits
+</details>
+
+<details>
+<summary>Lines — net LOC over time and notable large commits</summary>
+
 ![Lines](docs/screenshot-lines.png)
+
+</details>
 
 ## License
 
