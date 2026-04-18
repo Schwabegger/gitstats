@@ -170,6 +170,20 @@ def obfuscate(html: str) -> str:
 async def take_screenshots(html_path: Path):
     from playwright.async_api import async_playwright
 
+    # Patch the HTML so ALL sections are display:block before any JS runs.
+    # Charts inside display:none measure 0-width → broken axis layouts.
+    # We keep all sections visible throughout and clip each screenshot to
+    # the relevant section's bounding box — no show/hide toggling at all.
+    patched_path = html_path.parent / (html_path.stem + '_screenshot.html')
+    src = html_path.read_text(encoding='utf-8')
+    src = src.replace(
+        '</head>',
+        '<style>.section{display:block!important}</style></head>',
+        1,
+    )
+    # Also pre-mark all sections active so nav highlights look right per screenshot
+    patched_path.write_text(src, encoding='utf-8')
+
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         page = await browser.new_page(
@@ -177,33 +191,65 @@ async def take_screenshots(html_path: Path):
             device_scale_factor=2,
         )
 
-        await page.goto(f'file://{html_path}', wait_until='networkidle')
-        await page.wait_for_timeout(2000)  # fonts + initial render
+        await page.goto(f'file://{patched_path}', wait_until='networkidle')
+        await page.wait_for_timeout(500)
+
+        # Trigger every section's lazy init — all visible, correct widths.
+        await page.evaluate('''
+            Object.keys(sectionInits).forEach(sec => {
+                if (!_init[sec]) { _init[sec] = true; sectionInits[sec](); }
+            });
+        ''')
+
+        # Scroll full page slowly so every chart renders and animates.
+        scroll_y = 0
+        total_h = await page.evaluate('document.documentElement.scrollHeight')
+        while scroll_y < total_h:
+            scroll_y = min(scroll_y + 600, total_h)
+            await page.evaluate(f'window.scrollTo(0, {scroll_y})')
+            await page.wait_for_timeout(120)
+            total_h = await page.evaluate('document.documentElement.scrollHeight')
+        await page.evaluate('window.scrollTo(0, 0)')
+        await page.wait_for_timeout(2000)
 
         for sec_name, filename in SECTIONS:
             print(f'  {sec_name}...')
 
-            await page.click(f'nav a[data-sec="{sec_name}"]')
-            await page.evaluate('window.scrollTo(0, 0)')
-            await page.wait_for_timeout(800)
+            # Highlight the correct nav tab
+            await page.evaluate(f'''
+                document.querySelectorAll("nav a").forEach(a =>
+                    a.classList.toggle("active", a.dataset.sec === "{sec_name}"));
+            ''')
+            await page.wait_for_timeout(200)
 
-            # Scroll slowly to trigger lazy chart inits
-            scroll_y = 0
-            total_h = await page.evaluate('document.documentElement.scrollHeight')
-            while scroll_y < total_h:
-                scroll_y = min(scroll_y + 600, total_h)
-                await page.evaluate(f'window.scrollTo(0, {scroll_y})')
-                await page.wait_for_timeout(150)
-                total_h = await page.evaluate('document.documentElement.scrollHeight')
+            # Build a composite: screenshot the sticky top bar + the section element.
+            # We render the top (header+nav) and section separately then paste them.
+            top_el = await page.query_selector('header')
+            nav_el = await page.query_selector('nav')
+            sec_el = await page.query_selector(f'#sec-{sec_name}')
 
-            await page.evaluate('window.scrollTo(0, 0)')
-            await page.wait_for_timeout(1500)
+            top_img_bytes  = await top_el.screenshot()
+            nav_img_bytes  = await nav_el.screenshot()
+            sec_img_bytes  = await sec_el.screenshot()
+
+            from PIL import Image
+            import io
+            top_img = Image.open(io.BytesIO(top_img_bytes))
+            nav_img = Image.open(io.BytesIO(nav_img_bytes))
+            sec_img = Image.open(io.BytesIO(sec_img_bytes))
+
+            total_h = top_img.height + nav_img.height + sec_img.height
+            composite = Image.new('RGB', (sec_img.width, total_h), (13, 17, 23))
+            composite.paste(top_img, (0, 0))
+            composite.paste(nav_img, (0, top_img.height))
+            composite.paste(sec_img, (0, top_img.height + nav_img.height))
 
             out = SCRIPT_DIR / filename
-            await page.screenshot(path=str(out), full_page=True)
+            composite.save(str(out))
             print(f'    → {out}')
 
         await browser.close()
+        patched_path.unlink(missing_ok=True)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
