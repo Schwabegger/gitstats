@@ -141,6 +141,20 @@ def collect_stats(repo_path):
 
     total_all = run_git(repo_path, ["rev-list", "--all", "--count"]).strip()
     stats["total_commits_all"] = int(total_all) if total_all.isdigit() else len(commits)
+    total_head = run_git(repo_path, ["rev-list", "HEAD", "--count"]).strip()
+    stats["total_commits_head"] = int(total_head) if total_head.isdigit() else None
+
+    # Parse GitHub base URL from remote for commit links
+    raw_remote = stats.get("remote_url", "")
+    github_base = ""
+    m = re.match(r"git@github\.com:(.+?)(?:\.git)?$", raw_remote)
+    if m:
+        github_base = f"https://github.com/{m.group(1)}"
+    else:
+        m = re.match(r"https?://github\.com/(.+?)(?:\.git)?$", raw_remote)
+        if m:
+            github_base = f"https://github.com/{m.group(1)}"
+    stats["github_base"] = github_base
 
     # ── Current file stats ──
     print("  Counting files and lines...")
@@ -223,6 +237,16 @@ def collect_stats(repo_path):
     stats["authors"] = authors_list
     stats["total_authors"] = len(authors_list)
     stats["all_months"] = all_months_sorted
+
+    # ── Per-author commit list ──
+    author_commits_map = defaultdict(list)
+    for c in sorted(commits, key=lambda x: -x["timestamp"]):
+        author_commits_map[c["author"]].append({
+            "hash": c["hash"],
+            "ts": c["timestamp"],
+            "subject": c["subject"],
+        })
+    stats["author_commits"] = {k: v for k, v in author_commits_map.items()}
 
     # ── Per-author activity patterns ──
     print("  Computing per-author activity patterns...")
@@ -448,7 +472,7 @@ def generate_html(stats):
         author_rows += f"""
         <tr>
             <td>{i+1}</td>
-            <td class="author-name">{esc(a['name'])}</td>
+            <td class="author-name"><a href="#" class="author-link" data-author="{esc(a['name'])}">{esc(a['name'])}</a></td>
             <td class="num">{format_number(a['commits'])}</td>
             <td class="num">{pct:.1f}%</td>
             <td class="num add">+{format_number(a['insertions'])}</td>
@@ -533,6 +557,8 @@ def generate_html(stats):
         "allMonths": stats.get("all_months", []),
         "authorDetails": top_authors_detail,
         "authorActivity": author_activity,
+        "authorCommits": stats.get("author_commits", {}),
+        "githubBase": stats.get("github_base", ""),
     })
 
     report_html = f"""<!DOCTYPE html>
@@ -717,6 +743,23 @@ nav a:hover, nav a.active {{
 .data-table tbody td.add {{ color: var(--accent2); }}
 .data-table tbody td.del {{ color: var(--danger); }}
 .data-table tbody td.author-name {{ font-weight: 500; }}
+.author-link {{ color: var(--accent); text-decoration: none; }}
+.author-link:hover {{ text-decoration: underline; }}
+#author-modal {{ display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.7); align-items:center; justify-content:center; }}
+#author-modal.open {{ display:flex; }}
+#author-modal-box {{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); width:min(780px,95vw); max-height:80vh; display:flex; flex-direction:column; }}
+#author-modal-header {{ padding:1rem 1.25rem; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; }}
+#author-modal-title {{ font-weight:600; font-size:1rem; }}
+#author-modal-close {{ background:none; border:none; color:var(--text2); cursor:pointer; font-size:1.2rem; line-height:1; }}
+#author-modal-close:hover {{ color:var(--text); }}
+#author-modal-body {{ overflow-y:auto; padding:.75rem 1.25rem 1.25rem; }}
+.modal-commit-row {{ display:grid; grid-template-columns:7ch 14ch 1fr; gap:.5rem; padding:.4rem 0; border-bottom:1px solid var(--border); font-size:.85rem; align-items:baseline; }}
+.modal-commit-row:last-child {{ border-bottom:none; }}
+.modal-commit-hash {{ font-family:var(--mono); color:var(--accent); }}
+.modal-commit-hash a {{ color:inherit; text-decoration:none; }}
+.modal-commit-hash a:hover {{ text-decoration:underline; }}
+.modal-commit-date {{ color:var(--text2); }}
+.modal-commit-msg {{ word-break:break-word; }}
 .data-table tbody td.commit-msg {{
     max-width: 400px;
     overflow: hidden;
@@ -930,8 +973,8 @@ footer {{
     <div class="stat-grid">
         <div class="stat-card">
             <div class="label">Total Commits</div>
-            <div class="value">{format_number(stats['total_commits'])}</div>
-            <div class="sub">{format_number(stats['total_commits_all'])} including merges</div>
+            <div class="value">{format_number(stats['total_commits_head']) if stats.get('total_commits_head') else format_number(stats['total_commits'])}</div>
+            <div class="sub">{format_number(stats['total_commits'])} excl. merges · {format_number(stats['total_commits_all'])} all branches</div>
         </div>
         <div class="stat-card">
             <div class="label">Authors</div>
@@ -1370,8 +1413,44 @@ function renderContrib() {{
 
 document.addEventListener('DOMContentLoaded', () => {{
     _init['general'] = true;
+
+    // Author commit modal
+    const modal = document.getElementById('author-modal');
+    const modalTitle = document.getElementById('author-modal-title');
+    const modalBody = document.getElementById('author-modal-body');
+    document.getElementById('author-modal-close').addEventListener('click', () => modal.classList.remove('open'));
+    modal.addEventListener('click', e => {{ if (e.target === modal) modal.classList.remove('open'); }});
+
+    document.addEventListener('click', e => {{
+        const link = e.target.closest('.author-link');
+        if (!link) return;
+        e.preventDefault();
+        const author = link.dataset.author;
+        const commits = D.authorCommits[author] || [];
+        const base = D.githubBase;
+        modalTitle.textContent = author + ' — ' + commits.length + ' commits';
+        modalBody.innerHTML = commits.map(c => {{
+            const date = new Date(c.ts * 1000).toISOString().slice(0,10);
+            const hash7 = c.hash.slice(0,7);
+            const hashEl = base
+                ? `<a href="${{base}}/commit/${{c.hash}}" target="_blank" rel="noopener">${{hash7}}</a>`
+                : hash7;
+            return `<div class="modal-commit-row"><span class="modal-commit-hash">${{hashEl}}</span><span class="modal-commit-date">${{date}}</span><span class="modal-commit-msg">${{c.subject.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}}</span></div>`;
+        }}).join('');
+        modal.classList.add('open');
+    }});
 }});
 </script>
+
+<div id="author-modal">
+  <div id="author-modal-box">
+    <div id="author-modal-header">
+      <span id="author-modal-title"></span>
+      <button id="author-modal-close">✕</button>
+    </div>
+    <div id="author-modal-body"></div>
+  </div>
+</div>
 </body>
 </html>"""
 
