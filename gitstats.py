@@ -5,7 +5,7 @@ Analyzes a git repository and produces a self-contained HTML report
 with interactive charts and detailed statistics.
 
 Usage:
-    python3 gitstats.py <git_repo_path> [output_directory]
+    python3 gitstats.py <git_repo_path> [output_directory] [--blame [cache_dir]]
 
 Requirements:
     - Python 3.7+
@@ -17,6 +17,9 @@ import os
 import sys
 import json
 import re
+import argparse
+import hashlib
+import configparser
 from collections import defaultdict, Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -40,7 +43,195 @@ def run_git(repo_path, args, timeout=300):
         return ""
 
 
-def collect_stats(repo_path):
+DEFAULT_BLAME_FILTER = """\
+# gitstats blame filter configuration
+# Lines starting with # are comments.
+#
+# [whitelist]
+# If any extensions listed here, ONLY these are blamed. Blacklist is ignored for extensions.
+# extensions = .py .js .ts
+#
+# [blacklist]
+# Ignored when whitelist extensions are set.
+# Note: binary files are always excluded automatically regardless of this config.
+# extensions = .css .generated.cs ...
+#
+# [path_whitelist]
+# Always included, even if path_blacklist would exclude it. Same syntax as path_blacklist.
+# Use to carve out exceptions inside a blacklisted folder.
+# patterns =
+#
+# [path_blacklist]
+# Always applied regardless of extension whitelist.
+# No leading slash = substring match anywhere in path (e.g. migration)
+# Leading slash = anchored to repo root (e.g. /src/legacy matches src/legacy/... only)
+# patterns = migration /src/legacy
+
+[blacklist]
+extensions = .css .scss .sass .less
+
+[path_blacklist]
+patterns = migration vendor node_modules dist build __pycache__ .min. .bundle. fixtures seed
+"""
+
+
+def load_blame_filter(cache_dir):
+    """Load (and create if missing) blame_filter.ini from cache_dir."""
+    config_path = Path(cache_dir) / "blame_filter.ini"
+    if not config_path.exists():
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+        config_path.write_text(DEFAULT_BLAME_FILTER)
+        print()
+        print(f"  Created blame filter config: {config_path}")
+        print()
+        print("  Review it — add/remove extensions and path patterns to suit your repo.")
+        print("  Then re-run the same command to generate the report.")
+        print()
+        sys.exit(0)
+
+    cp = configparser.ConfigParser(allow_no_value=True)
+    cp.read_string(DEFAULT_BLAME_FILTER)   # load defaults first
+    cp.read(str(config_path))              # override with user file
+
+    def split_values(section, key):
+        raw = cp.get(section, key, fallback="")
+        return set(v.strip().lower() for v in raw.split() if v.strip())
+
+    whitelist_exts    = split_values("whitelist", "extensions")
+    blacklist_exts    = split_values("blacklist", "extensions")
+    path_whitelist    = split_values("path_whitelist", "patterns")
+    path_blacklist    = split_values("path_blacklist", "patterns")
+
+    return {
+        "whitelist_exts": whitelist_exts,
+        "blacklist_exts": blacklist_exts,
+        "path_whitelist": path_whitelist,
+        "path_blacklist": path_blacklist,
+    }
+
+
+def _path_matches(flower, patterns):
+    for pat in patterns:
+        if pat.startswith("/"):
+            if flower.startswith(pat[1:]):
+                return True
+        else:
+            if pat in flower:
+                return True
+    return False
+
+
+def blame_file_allowed(fpath, filt):
+    """Return True if this file should be blamed."""
+    flower = fpath.lower()
+    # Path whitelist overrides path blacklist
+    if filt["path_whitelist"] and _path_matches(flower, filt["path_whitelist"]):
+        pass  # don't apply path blacklist, fall through to extension check
+    elif _path_matches(flower, filt["path_blacklist"]):
+        return False
+    ext = Path(fpath).suffix.lower()
+    if filt["whitelist_exts"]:
+        return ext in filt["whitelist_exts"]
+    return ext not in filt["blacklist_exts"]
+
+
+def blame_cache_key(repo_path, commit_hash, filt=None):
+    repo_id = hashlib.md5(os.path.abspath(repo_path).encode()).hexdigest()[:8]
+    if filt:
+        filt_sig = hashlib.md5(json.dumps({
+            "wl": sorted(filt["whitelist_exts"]),
+            "bl": sorted(filt["blacklist_exts"]),
+            "pw": sorted(filt["path_whitelist"]),
+            "pb": sorted(filt["path_blacklist"]),
+        }, sort_keys=True).encode()).hexdigest()[:6]
+    else:
+        filt_sig = "nofilt"
+    return f"{repo_id}_{commit_hash}_{filt_sig}.json"
+
+
+def load_blame_cache(cache_dir, repo_path, commit_hash, filt=None):
+    if not cache_dir:
+        return None
+    p = Path(cache_dir) / blame_cache_key(repo_path, commit_hash, filt)
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            return None
+    return None
+
+
+def save_blame_cache(cache_dir, repo_path, commit_hash, data, filt=None):
+    if not cache_dir:
+        return
+    Path(cache_dir).mkdir(parents=True, exist_ok=True)
+    p = Path(cache_dir) / blame_cache_key(repo_path, commit_hash, filt)
+    p.write_text(json.dumps(data))
+
+
+def blame_snapshot(repo_path, commit_hash, filt, cache_dir=None):
+    """Return {author: line_count} for filtered tracked files at commit_hash."""
+    cached = load_blame_cache(cache_dir, repo_path, commit_hash, filt)
+    if cached is not None:
+        return cached
+
+    ls = run_git(repo_path, ["ls-tree", "-r", "--name-only", commit_hash], timeout=30)
+    all_files = [f for f in ls.strip().split("\n") if f.strip()]
+    files = [f for f in all_files if blame_file_allowed(f, filt)]
+
+    cmd_base = ["git", "-C", repo_path]
+
+    # Get binary file list for this commit in one shot — faster than per-file checks
+    numstat_out = subprocess.run(
+        cmd_base + ["diff", "--numstat", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", commit_hash],
+        capture_output=True, timeout=60,
+        env={**os.environ, "GIT_PAGER": "cat"}
+    ).stdout.decode("utf-8", errors="replace")
+    binary_files = set()
+    for line in numstat_out.splitlines():
+        if line.startswith("-\t-\t"):
+            binary_files.add(line[4:])
+
+    author_lines = defaultdict(int)
+    for fpath in files:
+        if fpath in binary_files:
+            continue
+
+        cmd = cmd_base + ["blame", "--line-porcelain", commit_hash, "--", fpath]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, timeout=60,
+                env={**os.environ, "GIT_PAGER": "cat"}
+            )
+            raw = result.stdout.decode("utf-8", errors="replace")
+            for line in raw.split("\n"):
+                if line.startswith("author "):
+                    author_lines[line[7:].strip()] += 1
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception:
+            pass
+
+    result = dict(author_lines)
+    save_blame_cache(cache_dir, repo_path, commit_hash, result, filt)
+    return result
+
+
+def collect_blame_over_time(repo_path, bucket_last_hash, sampled_buckets, filt, cache_dir=None):
+    """Run blame at each sampled bucket. Returns {label: {author: lines}}."""
+    print(f"  Running git blame at {len(sampled_buckets)} snapshots (this may take a while)...")
+    timeline = {}
+    for i, key in enumerate(sampled_buckets):
+        h = bucket_last_hash[key]
+        cached = load_blame_cache(cache_dir, repo_path, h, filt)
+        src = "cache" if cached is not None else "git blame"
+        print(f"    [{i+1}/{len(sampled_buckets)}] {key} ({src})...")
+        data = blame_snapshot(repo_path, h, filt, cache_dir)
+        timeline[key] = data
+    return timeline
+
+
+def collect_stats(repo_path, blame=False, blame_cache_dir=None):
     """Collect all statistics from the git repository."""
     stats = {}
     repo_path = os.path.abspath(repo_path)
@@ -52,6 +243,19 @@ def collect_stats(repo_path):
         if "true" not in check_bare:
             print(f"Error: '{repo_path}' is not a valid git repository.")
             sys.exit(1)
+
+    # ── Blame filter — check before any heavy work ──
+    blame_filt = None
+    if blame:
+        blame_filt = load_blame_filter(blame_cache_dir)  # exits if config was just created
+        if blame_filt["whitelist_exts"]:
+            print(f"Blame filter: whitelist {sorted(blame_filt['whitelist_exts'])}")
+        else:
+            print(f"Blame filter: blacklist {sorted(blame_filt['blacklist_exts'])}")
+        if blame_filt["path_whitelist"]:
+            print(f"Blame path whitelist: {sorted(blame_filt['path_whitelist'])}")
+        if blame_filt["path_blacklist"]:
+            print(f"Blame path blacklist: {sorted(blame_filt['path_blacklist'])}")
 
     print("Collecting repository data...")
 
@@ -407,6 +611,33 @@ def collect_stats(repo_path):
 
     stats["files_over_time"] = file_count_timeline
 
+    # ── Blame-based LOC over time (optional) ──
+    stats["blame_loc_over_time"] = None
+    stats["blame_filter"] = None
+    if blame:
+        blame_timeline = collect_blame_over_time(
+            repo_path, bucket_last_hash, sampled, blame_filt, blame_cache_dir
+        )
+        # Collect all authors seen across all snapshots
+        all_blame_authors = set()
+        for snap in blame_timeline.values():
+            all_blame_authors.update(snap.keys())
+        # Build per-author series aligned to sampled labels
+        blame_labels = sampled
+        blame_series = {}
+        for author in all_blame_authors:
+            blame_series[author] = [blame_timeline[k].get(author, 0) for k in blame_labels]
+        stats["blame_loc_over_time"] = {
+            "labels": blame_labels,
+            "series": blame_series,
+        }
+        stats["blame_filter"] = {
+            "whitelist_exts": sorted(blame_filt["whitelist_exts"]),
+            "blacklist_exts": sorted(blame_filt["blacklist_exts"]),
+            "path_whitelist": sorted(blame_filt["path_whitelist"]),
+            "path_blacklist": sorted(blame_filt["path_blacklist"]),
+        }
+
     # ── Tags ──
     print("  Listing tags...")
     tags_raw = run_git(repo_path, ["tag", "-l", "--sort=-creatordate",
@@ -431,6 +662,22 @@ def collect_stats(repo_path):
 
     stats["recent_commits"] = sorted_commits[-15:][::-1] if sorted_commits else []
 
+    # ── Commits bucketed by time_key (for chart drill-down) ──
+    commits_by_bucket = defaultdict(list)
+    for c in sorted_commits:
+        if c["timestamp"] <= 0:
+            continue
+        commits_by_bucket[time_key(c["timestamp"])].append({
+            "hash": c["hash"],
+            "ts": c["timestamp"],
+            "author": c["author"],
+            "subject": c["subject"],
+            "insertions": c["insertions"],
+            "deletions": c["deletions"],
+            "files_changed": c["files_changed"],
+        })
+    stats["commits_by_bucket"] = dict(commits_by_bucket)
+
     stats["generated_at"] = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     print("  Data collection complete.")
@@ -439,8 +686,7 @@ def collect_stats(repo_path):
 
 # ─── HTML Report Generator ──────────────────────────────────────────────────
 
-def generate_html(stats):
-    """Generate a self-contained HTML report."""
+def generate_html(stats, blame=False):
 
     def esc(s):
         return html_module.escape(str(s))
@@ -536,6 +782,39 @@ def generate_html(stats):
             "md": a["monthly_deletions"],
         })
 
+    # ── Blame filter info panel ──
+    bf = stats.get("blame_filter")
+    if bf:
+        def _tags(items, cls="tag"):
+            return "".join(f'<span class="{cls}">{esc(x)}</span>' for x in items) or '<span class="none">none</span>'
+        ext_heading = "Extension whitelist (only these)" if bf["whitelist_exts"] else "Extension blacklist (excluded)"
+        ext_items = bf["whitelist_exts"] or bf["blacklist_exts"]
+        blame_filter_html = f"""
+    <h2 class="section-title" style="margin-top:2rem;">Actual Lines Present in Project (git blame)</h2>
+    <p style="color:var(--text2);font-size:.85rem;margin:-1rem 0 1rem;">
+        Lines attributed to each author at each snapshot — accounts for code deleted by others.
+        Binary files always excluded. Extension and path rules from config applied.
+    </p>
+    <details class="blame-filter-details">
+        <summary>Blame filter config</summary>
+        <div class="blame-filter-body">
+            <div class="blame-filter-group">
+                <h4>{esc(ext_heading)}</h4>
+                <div class="tag-list">{_tags(ext_items)}</div>
+            </div>
+            <div class="blame-filter-group">
+                <h4>Path whitelist <span style="font-weight:400;text-transform:none;letter-spacing:0">(overrides blacklist)</span></h4>
+                <div class="tag-list">{_tags(bf["path_whitelist"])}</div>
+            </div>
+            <div class="blame-filter-group">
+                <h4>Path blacklist <span style="font-weight:400;text-transform:none;letter-spacing:0">(always applied)</span></h4>
+                <div class="tag-list">{_tags(bf["path_blacklist"], "tag always")}</div>
+            </div>
+        </div>
+    </details>"""
+    else:
+        blame_filter_html = ""
+
     author_activity = {}
     for a in stats["authors"][:20]:
         n = a["name"]
@@ -559,6 +838,8 @@ def generate_html(stats):
         "authorActivity": author_activity,
         "authorCommits": stats.get("author_commits", {}),
         "githubBase": stats.get("github_base", ""),
+        "blameLocOverTime": stats.get("blame_loc_over_time"),
+        "commitsByBucket": stats.get("commits_by_bucket", {}),
     })
 
     report_html = f"""<!DOCTYPE html>
@@ -932,6 +1213,185 @@ code {{
 .contrib-card .card-header .pill.del {{ color: var(--danger); }}
 .contrib-card canvas {{ width: 100% !important; }}
 
+.cmp-card {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: .6rem;
+}}
+.cmp-card .label {{
+    font-size: .75rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text2);
+    font-family: var(--mono);
+}}
+.cmp-row {{
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: .5rem;
+}}
+.cmp-row .author-tag {{
+    font-family: var(--mono);
+    font-size: .72rem;
+    padding: .1rem .45rem;
+    border-radius: 4px;
+}}
+.cmp-row .val {{
+    font-family: var(--mono);
+    font-size: 1.1rem;
+    font-weight: 700;
+}}
+.cmp-bar-wrap {{
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+}}
+.cmp-bar-a {{ height: 100%; border-radius: 2px 0 0 2px; }}
+.cmp-bar-b {{ height: 100%; border-radius: 0 2px 2px 0; }}
+
+.blame-filter-details {{
+    margin-bottom: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+}}
+.blame-filter-details summary {{
+    padding: .6rem 1rem;
+    font-family: var(--mono);
+    font-size: .78rem;
+    color: var(--text2);
+    cursor: pointer;
+    user-select: none;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+}}
+.blame-filter-details summary::before {{
+    content: '▶';
+    font-size: .6rem;
+    transition: transform .15s;
+}}
+.blame-filter-details[open] summary::before {{ transform: rotate(90deg); }}
+.blame-filter-details summary:hover {{ color: var(--text); }}
+.blame-filter-body {{
+    padding: .75rem 1rem 1rem;
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+}}
+.blame-filter-group h4 {{
+    font-family: var(--mono);
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text2);
+    margin-bottom: .4rem;
+}}
+.blame-filter-group .tag-list {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: .3rem;
+}}
+.blame-filter-group .tag {{
+    font-family: var(--mono);
+    font-size: .72rem;
+    padding: .15rem .45rem;
+    border-radius: 4px;
+    background: var(--surface2);
+    color: var(--text2);
+    border: 1px solid var(--border);
+}}
+.blame-filter-group .tag.always {{ border-color: var(--accent4); color: var(--accent4); }}
+.blame-filter-group .none {{ color: var(--text2); font-size: .78rem; font-style: italic; }}
+
+.bucket-panel {{
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-top: 1rem;
+    overflow: hidden;
+}}
+.bucket-panel-header {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: .8rem;
+}}
+.bucket-panel-header .bucket-label {{
+    color: var(--accent);
+    font-weight: 600;
+}}
+.bucket-panel-header .bucket-meta {{
+    color: var(--text2);
+    font-size: .75rem;
+}}
+.bucket-panel-header .freeze-btn {{
+    font-family: var(--mono);
+    font-size: .72rem;
+    padding: .25rem .65rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text2);
+    cursor: pointer;
+    transition: all .12s;
+}}
+.bucket-panel-header .freeze-btn.frozen {{
+    border-color: var(--accent5);
+    color: var(--accent5);
+    background: var(--surface);
+}}
+.bucket-panel-header .freeze-btn:hover {{ color: var(--text); }}
+.bucket-table-wrap {{ overflow-x: auto; max-height: 340px; overflow-y: auto; }}
+.bucket-table {{
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .8rem;
+}}
+.bucket-table thead th {{
+    font-family: var(--mono);
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text2);
+    padding: .5rem .7rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--surface);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}}
+.bucket-table thead th:hover {{ color: var(--text); }}
+.bucket-table thead th.sort-asc::after {{ content: ' ↑'; color: var(--accent); }}
+.bucket-table thead th.sort-desc::after {{ content: ' ↓'; color: var(--accent); }}
+.bucket-table thead th.num {{ text-align: right; }}
+.bucket-table tbody td {{
+    padding: .45rem .7rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+}}
+.bucket-table tbody td.num {{ text-align: right; font-family: var(--mono); font-size: .78rem; }}
+.bucket-table tbody td.add {{ color: var(--accent2); }}
+.bucket-table tbody td.del {{ color: var(--danger); }}
+.bucket-table tbody tr:hover {{ background: var(--surface2); }}
+
 footer {{
     text-align: center;
     padding: 2rem 0;
@@ -962,6 +1422,7 @@ footer {{
     <a data-sec="activity">Activity</a>
     <a data-sec="authors">Authors</a>
     <a data-sec="contributions">Contributions</a>
+    <a data-sec="compare">Compare</a>
     <a data-sec="files">Files</a>
     <a data-sec="lines">Lines</a>
     <a data-sec="tags">Tags</a>
@@ -1092,6 +1553,75 @@ footer {{
         </select>
     </div>
     <div id="contrib-cards" class="contrib-cards"></div>
+</div>
+
+<!-- ═══════ COMPARE ═══════ -->
+<div id="sec-compare" class="section">
+    <h2 class="section-title">Compare Contributors</h2>
+    <div class="contrib-controls" style="margin-bottom:2rem;">
+        <label>Author A:</label>
+        <select id="cmp-a">
+            {"".join(f'<option value="{esc(a["name"])}">{esc(a["name"])}</option>' for a in stats["authors"][:50])}
+        </select>
+        <label style="margin-left:1rem;">Author B:</label>
+        <select id="cmp-b">
+            {"".join(f'<option value="{esc(a["name"])}" {"selected" if i==1 else ""}>{esc(a["name"])}</option>' for i, a in enumerate(stats["authors"][:50]))}
+        </select>
+        <label style="margin-left:1rem;">Time range:</label>
+        <select id="cmp-range">
+            <option value="all" selected>All time</option>
+            <option value="12">Last 12 months</option>
+            <option value="6">Last 6 months</option>
+            <option value="3">Last 3 months</option>
+        </select>
+    </div>
+    <div id="cmp-stat-cards" class="stat-grid" style="margin-bottom:2rem;"></div>
+    <div class="chart-row">
+        <div class="chart-box full"><h3 id="cmp-monthly-title">Commits per Month</h3><canvas id="chart-cmp-monthly"></canvas></div>
+    </div>
+    <div class="chart-row">
+        <div class="chart-box"><h3>Hour of Day</h3><canvas id="chart-cmp-hour"></canvas></div>
+        <div class="chart-box"><h3>Day of Week</h3><canvas id="chart-cmp-dow"></canvas></div>
+    </div>
+    <div class="chart-row">
+        <div class="chart-box full"><h3>Cumulative Net LOC over Time (insertions − deletions, approximation)</h3><canvas id="chart-cmp-netloc"></canvas></div>
+    </div>
+    <div class="chart-row">
+        <div class="chart-box full"><h3>Cumulative Additions over Time</h3><canvas id="chart-cmp-additions"></canvas></div>
+    </div>
+    {blame_filter_html}
+    {"" if not blame else '''
+    <div class="chart-row">
+        <div class="chart-box full">
+            <h3>Lines in Project — Selected Authors (blame) <span id="cmp-blame-hint" style="font-weight:400;color:var(--text2);font-size:.7rem;margin-left:.5rem;">click a point to see commits</span></h3>
+            <canvas id="chart-cmp-blame"></canvas>
+            <div id="blame-commit-panel" style="display:none;" class="bucket-panel">
+                <div class="bucket-panel-header">
+                    <span class="bucket-label" id="bcp-label"></span>
+                    <span class="bucket-meta" id="bcp-meta"></span>
+                    <button class="freeze-btn" id="bcp-freeze">freeze</button>
+                </div>
+                <div class="bucket-table-wrap">
+                    <table class="bucket-table" id="bcp-table">
+                        <thead><tr>
+                            <th data-col="hash">Hash</th>
+                            <th data-col="ts">Date</th>
+                            <th data-col="author">Author</th>
+                            <th data-col="ins" class="num">+Lines</th>
+                            <th data-col="del" class="num">-Lines</th>
+                            <th data-col="files" class="num">Files</th>
+                            <th data-col="subject">Message</th>
+                        </tr></thead>
+                        <tbody id="bcp-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="chart-row">
+        <div class="chart-box full"><h3>All Authors — Lines in Project at Latest Snapshot (blame)</h3><canvas id="chart-cmp-blame-bar"></canvas></div>
+    </div>
+    '''}
 </div>
 
 <!-- ═══════ FILES ═══════ -->
@@ -1305,6 +1835,7 @@ const sectionInits = {{
         new Chart('chart-loc', {{ type:'line', data:{{ labels:D.locOverTime.labels, datasets:[{{ label:'Net LOC', data:D.locOverTime.values, borderColor:C.green, backgroundColor:C.green+'18', fill:true }}] }}, options:lO() }});
     }},
     contributions: function() {{ initContributions(); }},
+    compare: function() {{ initCompare(); }},
 }};
 
 
@@ -1411,6 +1942,288 @@ function renderContrib() {{
     }});
 }}
 
+// ── Compare tab ──
+let cmpCharts = {{}};
+
+function initCompare() {{
+    renderCompare();
+    document.getElementById('cmp-a').addEventListener('change', renderCompare);
+    document.getElementById('cmp-b').addEventListener('change', renderCompare);
+    document.getElementById('cmp-range').addEventListener('change', renderCompare);
+}}
+
+function renderCompare() {{
+    const nameA = document.getElementById('cmp-a').value;
+    const nameB = document.getElementById('cmp-b').value;
+    const range = document.getElementById('cmp-range').value;
+
+    const aM = D.allMonths;
+    let si = 0;
+    if (range !== 'all' && aM.length) si = Math.max(0, aM.length - parseInt(range));
+    const vm = aM.slice(si);
+
+    function getDetail(name) {{
+        return D.authorDetails.find(a => a.name === name) || null;
+    }}
+    function getActivity(name) {{
+        return D.authorActivity[name] || {{ hour: Array(24).fill(0), dow: Array(7).fill(0) }};
+    }}
+
+    const dA = getDetail(nameA), dB = getDetail(nameB);
+    const acA = getActivity(nameA), acB = getActivity(nameB);
+
+    // Sliced monthly data
+    const mcA = dA ? dA.mc.slice(si) : Array(vm.length).fill(0);
+    const mcB = dB ? dB.mc.slice(si) : Array(vm.length).fill(0);
+    const miA = dA ? dA.mi.slice(si) : Array(vm.length).fill(0);
+    const miB = dB ? dB.mi.slice(si) : Array(vm.length).fill(0);
+
+    const tCA = mcA.reduce((s,v)=>s+v,0);
+    const tCB = mcB.reduce((s,v)=>s+v,0);
+    const tIA = miA.reduce((s,v)=>s+v,0);
+    const tIB = miB.reduce((s,v)=>s+v,0);
+    const tDA = dA ? dA.md.slice(si).reduce((s,v)=>s+v,0) : 0;
+    const tDB = dB ? dB.md.slice(si).reduce((s,v)=>s+v,0) : 0;
+
+    // Stat cards
+    const cards = document.getElementById('cmp-stat-cards');
+    function pct(a, b) {{
+        const t = a + b; return t === 0 ? [50, 50] : [a/t*100, b/t*100];
+    }}
+    function statCard(label, vA, vB, colorA, colorB) {{
+        const [pA, pB] = pct(vA, vB);
+        return `<div class="cmp-card">
+            <div class="label">${{label}}</div>
+            <div class="cmp-row">
+                <span class="author-tag" style="background:${{colorA}}22;color:${{colorA}}">${{nameA}}</span>
+                <span class="val">${{vA.toLocaleString()}}</span>
+            </div>
+            <div class="cmp-row">
+                <span class="author-tag" style="background:${{colorB}}22;color:${{colorB}}">${{nameB}}</span>
+                <span class="val">${{vB.toLocaleString()}}</span>
+            </div>
+            <div class="cmp-bar-wrap">
+                <div class="cmp-bar-a" style="background:${{colorA}};width:${{pA}}%"></div>
+                <div class="cmp-bar-b" style="background:${{colorB}};width:${{pB}}%"></div>
+            </div>
+        </div>`;
+    }}
+    cards.innerHTML =
+        statCard('Commits', tCA, tCB, C.blue, C.orange) +
+        statCard('Lines Added', tIA, tIB, C.green, C.yellow) +
+        statCard('Lines Removed', tDA, tDB, C.red, C.pink);
+
+    // Destroy old charts
+    Object.values(cmpCharts).forEach(ch => ch.destroy());
+    cmpCharts = {{}};
+
+    document.getElementById('cmp-monthly-title').textContent = 'Commits per Month — ' + nameA + ' vs ' + nameB;
+
+    const dow = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+
+    cmpCharts.monthly = new Chart('chart-cmp-monthly', {{
+        type: 'bar',
+        data: {{
+            labels: vm,
+            datasets: [
+                {{ label: nameA, data: mcA, backgroundColor: C.blue+'88', borderColor: C.blue, borderWidth: 1, borderRadius: 2 }},
+                {{ label: nameB, data: mcB, backgroundColor: C.orange+'88', borderColor: C.orange, borderWidth: 1, borderRadius: 2 }},
+            ]
+        }},
+        options: {{ ...lO(), plugins: {{ ...lO().plugins, legend: {{ display: true, labels: {{ color: '#e6edf3', font: {{ family: "'JetBrains Mono', monospace", size: 11 }} }} }} }} }}
+    }});
+
+    cmpCharts.hour = new Chart('chart-cmp-hour', {{
+        type: 'bar',
+        data: {{
+            labels: Array.from({{length:24}}, (_,i) => i+'h'),
+            datasets: [
+                {{ label: nameA, data: acA.hour, backgroundColor: C.blue+'88', borderColor: C.blue, borderWidth: 1, borderRadius: 2 }},
+                {{ label: nameB, data: acB.hour, backgroundColor: C.orange+'88', borderColor: C.orange, borderWidth: 1, borderRadius: 2 }},
+            ]
+        }},
+        options: {{ ...bO(), plugins: {{ ...bO().plugins, legend: {{ display: true, labels: {{ color: '#e6edf3', font: {{ family: "'JetBrains Mono', monospace", size: 11 }} }} }} }} }}
+    }});
+
+    cmpCharts.dow = new Chart('chart-cmp-dow', {{
+        type: 'bar',
+        data: {{
+            labels: dow,
+            datasets: [
+                {{ label: nameA, data: acA.dow, backgroundColor: C.blue+'88', borderColor: C.blue, borderWidth: 1, borderRadius: 2 }},
+                {{ label: nameB, data: acB.dow, backgroundColor: C.orange+'88', borderColor: C.orange, borderWidth: 1, borderRadius: 2 }},
+            ]
+        }},
+        options: {{ ...bO(), plugins: {{ ...bO().plugins, legend: {{ display: true, labels: {{ color: '#e6edf3', font: {{ family: "'JetBrains Mono', monospace", size: 11 }} }} }} }} }}
+    }});
+
+    function cumsum(arr) {{ let s=0; return arr.map(v => (s+=v, s)); }}
+    const legendOpts = {{ display: true, labels: {{ color: '#e6edf3', font: {{ family: "'JetBrains Mono', monospace", size: 11 }} }} }};
+
+    // Net LOC (ins - del cumulative)
+    const mdA = dA ? dA.md.slice(si) : Array(vm.length).fill(0);
+    const mdB = dB ? dB.md.slice(si) : Array(vm.length).fill(0);
+    const netA = cumsum(miA.map((v,i) => v - mdA[i]));
+    const netB = cumsum(miB.map((v,i) => v - mdB[i]));
+    cmpCharts.netloc = new Chart('chart-cmp-netloc', {{
+        type: 'line',
+        data: {{
+            labels: vm,
+            datasets: [
+                {{ label: nameA, data: netA, borderColor: C.blue, backgroundColor: C.blue+'18', fill: false }},
+                {{ label: nameB, data: netB, borderColor: C.orange, backgroundColor: C.orange+'18', fill: false }},
+            ]
+        }},
+        options: {{ ...lO(), plugins: {{ ...lO().plugins, legend: legendOpts }} }}
+    }});
+
+    cmpCharts.additions = new Chart('chart-cmp-additions', {{
+        type: 'line',
+        data: {{
+            labels: vm,
+            datasets: [
+                {{ label: nameA, data: cumsum(miA), borderColor: C.green, backgroundColor: C.green+'18', fill: false }},
+                {{ label: nameB, data: cumsum(miB), borderColor: C.yellow, backgroundColor: C.yellow+'18', fill: false }},
+            ]
+        }},
+        options: {{ ...lO(), plugins: {{ ...lO().plugins, legend: legendOpts }} }}
+    }});
+
+    // Blame charts (only rendered if data present)
+    if (D.blameLocOverTime) {{
+        const blameLabels = D.blameLocOverTime.labels;
+        const blameSeries = D.blameLocOverTime.series;
+
+        // Two-author line chart filtered to selected authors
+        const blameA = blameSeries[nameA] || Array(blameLabels.length).fill(0);
+        const blameB = blameSeries[nameB] || Array(blameLabels.length).fill(0);
+        if (cmpCharts.blame) cmpCharts.blame.destroy();
+
+        // Commit panel state
+        let bcpFrozen = false;
+        let bcpSortCol = 'ts';
+        let bcpSortDir = -1; // -1 desc, 1 asc
+
+        const bcpPanel = document.getElementById('blame-commit-panel');
+        const bcpLabel = document.getElementById('bcp-label');
+        const bcpMeta  = document.getElementById('bcp-meta');
+        const bcpBody  = document.getElementById('bcp-body');
+        const bcpFreeze = document.getElementById('bcp-freeze');
+
+        bcpFreeze.onclick = () => {{
+            bcpFrozen = !bcpFrozen;
+            bcpFreeze.textContent = bcpFrozen ? 'unfreeze' : 'freeze';
+            bcpFreeze.classList.toggle('frozen', bcpFrozen);
+        }};
+
+        // Sortable headers
+        document.getElementById('bcp-table').querySelectorAll('thead th').forEach(th => {{
+            th.addEventListener('click', () => {{
+                const col = th.dataset.col;
+                if (bcpSortCol === col) bcpSortDir *= -1;
+                else {{ bcpSortCol = col; bcpSortDir = col === 'ts' || col === 'ins' || col === 'del' || col === 'files' ? -1 : 1; }}
+                document.getElementById('bcp-table').querySelectorAll('thead th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+                th.classList.add(bcpSortDir === 1 ? 'sort-asc' : 'sort-desc');
+                renderBcpRows(bcpBody._currentBucket);
+            }});
+        }});
+
+        function renderBcpRows(bucket) {{
+            if (!bucket) return;
+            bcpBody._currentBucket = bucket;
+            const commits = (D.commitsByBucket[bucket] || []).slice();
+            const col = bcpSortCol, dir = bcpSortDir;
+            commits.sort((a, b) => {{
+                let av, bv;
+                if (col === 'ts')      {{ av = a.ts;          bv = b.ts; }}
+                else if (col === 'ins') {{ av = a.insertions;  bv = b.insertions; }}
+                else if (col === 'del') {{ av = a.deletions;   bv = b.deletions; }}
+                else if (col === 'files') {{ av = a.files_changed; bv = b.files_changed; }}
+                else if (col === 'author') {{ av = a.author.toLowerCase(); bv = b.author.toLowerCase(); }}
+                else if (col === 'subject') {{ av = a.subject.toLowerCase(); bv = b.subject.toLowerCase(); }}
+                else {{ av = a.hash; bv = b.hash; }}
+                return av < bv ? -dir : av > bv ? dir : 0;
+            }});
+            const base = D.githubBase;
+            bcpBody.innerHTML = commits.map(c => {{
+                const date = new Date(c.ts * 1000).toISOString().slice(0,10);
+                const h7 = c.hash.slice(0,7);
+                const hashEl = base
+                    ? `<a href="${{base}}/commit/${{c.hash}}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${{h7}}</a>`
+                    : h7;
+                const msg = c.subject.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                return `<tr>
+                    <td><code>${{hashEl}}</code></td>
+                    <td>${{date}}</td>
+                    <td>${{c.author}}</td>
+                    <td class="num add">+${{c.insertions.toLocaleString()}}</td>
+                    <td class="num del">-${{c.deletions.toLocaleString()}}</td>
+                    <td class="num">${{c.files_changed}}</td>
+                    <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${{msg}}">${{msg}}</td>
+                </tr>`;
+            }}).join('');
+            // set sort indicator
+            document.getElementById('bcp-table').querySelectorAll('thead th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+            const activeHdr = document.querySelector(`#bcp-table thead th[data-col="${{col}}"]`);
+            if (activeHdr) activeHdr.classList.add(dir === 1 ? 'sort-asc' : 'sort-desc');
+        }}
+
+        function showBucketPanel(bucket) {{
+            if (bcpFrozen) return;
+            const commits = D.commitsByBucket[bucket] || [];
+            bcpLabel.textContent = bucket;
+            bcpMeta.textContent = `${{commits.length}} commit${{commits.length !== 1 ? 's' : ''}}`;
+            bcpPanel.style.display = '';
+            renderBcpRows(bucket);
+        }}
+
+        const blameOpts = {{
+            ...lO(),
+            plugins: {{ ...lO().plugins, legend: legendOpts }},
+            onClick: (evt, elements, chart) => {{
+                if (!elements.length) return;
+                const idx = elements[0].index;
+                const bucket = blameLabels[idx];
+                showBucketPanel(bucket);
+            }},
+            onHover: (evt, elements) => {{
+                evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+            }},
+        }};
+        // Make points visible on hover
+        blameOpts.elements = {{ point: {{ radius: 3, hoverRadius: 7 }}, line: {{ tension: 0.3, borderWidth: 2 }} }};
+
+        cmpCharts.blame = new Chart('chart-cmp-blame', {{
+            type: 'line',
+            data: {{
+                labels: blameLabels,
+                datasets: [
+                    {{ label: nameA, data: blameA, borderColor: C.blue, backgroundColor: C.blue+'18', fill: false }},
+                    {{ label: nameB, data: blameB, borderColor: C.orange, backgroundColor: C.orange+'18', fill: false }},
+                ]
+            }},
+            options: blameOpts,
+        }});
+
+        // Bar chart: all authors at latest snapshot
+        const lastIdx = blameLabels.length - 1;
+        const barData = Object.entries(blameSeries)
+            .map(([name, vals]) => ({{ name, lines: vals[lastIdx] || 0 }}))
+            .filter(x => x.lines > 0)
+            .sort((a,b) => b.lines - a.lines)
+            .slice(0, 20);
+        if (cmpCharts.blameBar) cmpCharts.blameBar.destroy();
+        cmpCharts.blameBar = new Chart('chart-cmp-blame-bar', {{
+            type: 'bar',
+            data: {{
+                labels: barData.map(x => x.name.length>20 ? x.name.slice(0,18)+'…' : x.name),
+                datasets: [{{ data: barData.map(x=>x.lines), backgroundColor: barData.map((_,i)=>CL[i%CL.length]+'cc'), borderRadius: 3 }}]
+            }},
+            options: {{ ...bO(), plugins: {{ ...bO().plugins, tooltip: {{ callbacks: {{ label: c => 'Lines: '+c.parsed.y.toLocaleString() }} }} }} }}
+        }});
+    }}
+}}
+
 document.addEventListener('DOMContentLoaded', () => {{
     _init['general'] = true;
 
@@ -1460,27 +2273,40 @@ document.addEventListener('DOMContentLoaded', () => {{
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python3 gitstats.py <git_repo_path> [output_directory]")
-        print()
-        print("  git_repo_path    Path to a git repository")
-        print("  output_directory  Where to write the report (default: ./gitstats_report)")
+    parser = argparse.ArgumentParser(
+        description="gitstats — git repository statistics report generator"
+    )
+    parser.add_argument("repo_path", help="Path to a git repository")
+    parser.add_argument("output_dir", nargs="?", default="gitstats_report",
+                        help="Where to write the report (default: gitstats_report)")
+    parser.add_argument(
+        "--blame", nargs="?", const=True, metavar="CACHE_DIR",
+        help="Enable blame-based LOC tracking. Optionally specify a cache directory "
+             "(default: ~/.cache/gitstats_blame). Slow on first run, fast on re-runs."
+    )
+    args = parser.parse_args()
+
+    if not os.path.isdir(args.repo_path):
+        print(f"Error: '{args.repo_path}' is not a directory.")
         sys.exit(1)
 
-    repo_path = sys.argv[1]
-    output_dir = sys.argv[2] if len(sys.argv) > 2 else "gitstats_report"
+    blame_enabled = args.blame is not None
+    if blame_enabled:
+        if args.blame is True:
+            blame_cache_dir = os.path.expanduser("~/.cache/gitstats_blame")
+        else:
+            blame_cache_dir = os.path.expanduser(args.blame)
+        print(f"Blame mode enabled. Cache: {blame_cache_dir}")
+    else:
+        blame_cache_dir = None
 
-    if not os.path.isdir(repo_path):
-        print(f"Error: '{repo_path}' is not a directory.")
-        sys.exit(1)
+    stats = collect_stats(args.repo_path, blame=blame_enabled, blame_cache_dir=blame_cache_dir)
 
-    stats = collect_stats(repo_path)
-
-    os.makedirs(output_dir, exist_ok=True)
-    out_file = os.path.join(output_dir, "index.html")
+    os.makedirs(args.output_dir, exist_ok=True)
+    out_file = os.path.join(args.output_dir, "index.html")
 
     print(f"Generating report...")
-    html = generate_html(stats)
+    html = generate_html(stats, blame=blame_enabled)
 
     with open(out_file, "w", encoding="utf-8") as f:
         f.write(html)

@@ -13,7 +13,7 @@ a self-contained, dark-themed HTML report with Chart.js charts and interactive t
 
 **Output**: one `index.html` file, no external dependencies at runtime.
 
-**Usage**: `python3 gitstats.py <repo_path> [output_dir]`
+**Usage**: `python3 gitstats.py <repo_path> [output_dir] [--blame [cache_dir]]`
 
 ---
 
@@ -40,6 +40,21 @@ README.md
 - Chart.js charts: activity (hour/dow/month/year/monthly-line), heatmap, authors bar,
   contributions per-author, files-over-time, LOC-over-time
 - Obfuscation + screenshot pipeline (`docs/screenshot.py`)
+- **Compare tab**: side-by-side author comparison — commits/month, hour/dow activity,
+  cumulative net-LOC, cumulative additions
+- **`--blame` mode**: git-blame-based actual LOC per author over time (who wrote the lines
+  currently present in the project, accounting for deletions by others)
+  - Cache: `{cache_dir}/{repo_id}_{hash}_{filter_sig}.json` — keyed by filter fingerprint
+    so config changes auto-invalidate stale entries
+  - Filter config: `{cache_dir}/blame_filter.ini` — auto-created on first run, program
+    exits so user can review before blame starts
+  - Binary files always excluded (via `git diff --numstat` against empty tree)
+  - Config supports: `[whitelist]`/`[blacklist]` extensions, `[path_whitelist]`/`[path_blacklist]`
+    patterns (prefix `/` for repo-root-anchored, else substring); path whitelist overrides blacklist
+  - Blame charts: line chart (selected authors, clickable points → commit panel),
+    bar chart (all authors at latest snapshot)
+  - Commit drill-down panel: click a point → sortable table of commits for that bucket;
+    freeze button locks panel while browsing
 
 ---
 
