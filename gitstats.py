@@ -1577,7 +1577,7 @@ footer {{
     </div>
     <div id="cmp-stat-cards" class="stat-grid" style="margin-bottom:2rem;"></div>
     <div class="chart-row">
-        <div class="chart-box full"><h3 id="cmp-monthly-title">Commits per Month</h3><canvas id="chart-cmp-monthly"></canvas></div>
+        <div class="chart-box full"><h3 id="cmp-monthly-title">Commits &amp; ±LOC per Month</h3><canvas id="chart-cmp-monthly"></canvas></div>
     </div>
     <div class="chart-row">
         <div class="chart-box"><h3>Hour of Day</h3><canvas id="chart-cmp-hour"></canvas></div>
@@ -1944,6 +1944,76 @@ function renderContrib() {{
 
 // ── Compare tab ──
 let cmpCharts = {{}};
+function drawMonthlyChart(vm, mcA, mcB, miA, miB, mdA, mdB, nameA, nameB) {{
+    if (cmpCharts.monthly) cmpCharts.monthly.destroy();
+    document.getElementById('cmp-monthly-title').textContent = 'Commits & ±LOC per Month — ' + nameA + ' vs ' + nameB;
+    const netMonthA = miA.map((v,i) => v - mdA[i]);
+    // Symmetric log transform: preserves sign, log-scales magnitude, zero stays zero
+    const symlog = v => v === 0 ? 0 : Math.sign(v) * Math.log1p(Math.abs(v));
+    const symlogInv = v => v === 0 ? 0 : Math.sign(v) * (Math.expm1(Math.abs(v)));
+
+    // Separate +LOC (insertions) and -LOC (deletions, negated) per author
+    const insA = miA.map(symlog);
+    const insB = miB.map(symlog);
+    const delA = mdA.map(v => symlog(-v));
+    const delB = mdB.map(v => symlog(-v));
+
+    // Align zeros: both axes share the same zero-fraction vertically.
+    const yMax = Math.max(...mcA, ...mcB, 1);
+    const l1Max = Math.max(...insA, ...insB, 0.01);
+    const l1Min = Math.min(...delA, ...delB, -0.01);
+    const zeroFrac = Math.abs(l1Min) / (l1Max - l1Min);
+    const yMin = -(zeroFrac / (1 - zeroFrac)) * yMax;
+    const y1AlignedMin = l1Min;
+    const y1AlignedMax = l1Max;
+
+    const legendOpts2 = {{ display: true, labels: {{ color: '#e6edf3', font: {{ family: "'JetBrains Mono', monospace", size: 11 }} }} }};
+    const baseOpts = lO();
+    cmpCharts.monthly = new Chart('chart-cmp-monthly', {{
+        data: {{
+            labels: vm,
+            datasets: [
+                {{ type:'bar',  label: nameA+' commits', data: mcA, backgroundColor: C.blue+'55',   borderColor: C.blue,   borderWidth: 1, borderRadius: 2, yAxisID: 'y',  order: 2 }},
+                {{ type:'bar',  label: nameB+' commits', data: mcB, backgroundColor: C.orange+'55', borderColor: C.orange, borderWidth: 1, borderRadius: 2, yAxisID: 'y',  order: 2 }},
+                {{ type:'line', label: nameA+' +LOC',    data: insA, borderColor: C.green,  backgroundColor: 'transparent', borderWidth: 2, borderDash: [5,3], pointRadius: 2, pointHoverRadius: 5, tension: 0.3, yAxisID: 'y1', order: 1 }},
+                {{ type:'line', label: nameB+' +LOC',    data: insB, borderColor: C.yellow, backgroundColor: 'transparent', borderWidth: 2, borderDash: [5,3], pointRadius: 2, pointHoverRadius: 5, tension: 0.3, yAxisID: 'y1', order: 1 }},
+                {{ type:'line', label: nameA+' -LOC',    data: delA, borderColor: C.red,    backgroundColor: 'transparent', borderWidth: 2, borderDash: [2,2], pointRadius: 2, pointHoverRadius: 5, tension: 0.3, yAxisID: 'y1', order: 1 }},
+                {{ type:'line', label: nameB+' -LOC',    data: delB, borderColor: C.pink,   backgroundColor: 'transparent', borderWidth: 2, borderDash: [2,2], pointRadius: 2, pointHoverRadius: 5, tension: 0.3, yAxisID: 'y1', order: 1 }},
+            ]
+        }},
+        options: {{
+            ...baseOpts,
+            plugins: {{
+                ...baseOpts.plugins,
+                legend: legendOpts2,
+                tooltip: {{ callbacks: {{ label: ctx => {{
+                    if (ctx.dataset.yAxisID === 'y1') {{
+                        const real = Math.abs(Math.round(symlogInv(ctx.parsed.y)));
+                        return ctx.dataset.label + ': ' + real.toLocaleString() + ' lines';
+                    }}
+                    return ctx.dataset.label + ': ' + ctx.parsed.y.toLocaleString();
+                }} }} }}
+            }},
+            scales: {{
+                x: {{ grid: {{ display: false }}, ticks: {{ maxTicksLimit: 15, font: {{ size: 9 }} }} }},
+                y: {{
+                    type: 'linear', position: 'left',
+                    min: yMin, max: yMax,
+                    grid: {{ color: '#30363d22' }},
+                    ticks: {{ stepSize: Math.ceil(yMax / 15), callback: v => v < 0 ? '' : v.toLocaleString() }},
+                    title: {{ display: true, text: 'Commits', color: '#8b949e', font: {{ size: 10 }} }}
+                }},
+                y1: {{
+                    type: 'linear', position: 'right',
+                    min: y1AlignedMin, max: y1AlignedMax,
+                    grid: {{ drawOnChartArea: false }},
+                    ticks: {{ stepSize: (y1AlignedMax - y1AlignedMin) / 15, callback: v => Math.abs(Math.round(symlogInv(v))).toLocaleString() }},
+                    title: {{ display: true, text: '±LOC', color: '#8b949e', font: {{ size: 10 }} }}
+                }}
+            }}
+        }}
+    }});
+}}
 
 function initCompare() {{
     renderCompare();
@@ -2017,21 +2087,11 @@ function renderCompare() {{
     Object.values(cmpCharts).forEach(ch => ch.destroy());
     cmpCharts = {{}};
 
-    document.getElementById('cmp-monthly-title').textContent = 'Commits per Month — ' + nameA + ' vs ' + nameB;
-
     const dow = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
-    cmpCharts.monthly = new Chart('chart-cmp-monthly', {{
-        type: 'bar',
-        data: {{
-            labels: vm,
-            datasets: [
-                {{ label: nameA, data: mcA, backgroundColor: C.blue+'88', borderColor: C.blue, borderWidth: 1, borderRadius: 2 }},
-                {{ label: nameB, data: mcB, backgroundColor: C.orange+'88', borderColor: C.orange, borderWidth: 1, borderRadius: 2 }},
-            ]
-        }},
-        options: {{ ...lO(), plugins: {{ ...lO().plugins, legend: {{ display: true, labels: {{ color: '#e6edf3', font: {{ family: "'JetBrains Mono', monospace", size: 11 }} }} }} }} }}
-    }});
+    const mdA = dA ? dA.md.slice(si) : Array(vm.length).fill(0);
+    const mdB = dB ? dB.md.slice(si) : Array(vm.length).fill(0);
+    drawMonthlyChart(vm, mcA, mcB, miA, miB, mdA, mdB, nameA, nameB);
 
     cmpCharts.hour = new Chart('chart-cmp-hour', {{
         type: 'bar',
@@ -2061,8 +2121,6 @@ function renderCompare() {{
     const legendOpts = {{ display: true, labels: {{ color: '#e6edf3', font: {{ family: "'JetBrains Mono', monospace", size: 11 }} }} }};
 
     // Net LOC (ins - del cumulative)
-    const mdA = dA ? dA.md.slice(si) : Array(vm.length).fill(0);
-    const mdB = dB ? dB.md.slice(si) : Array(vm.length).fill(0);
     const netA = cumsum(miA.map((v,i) => v - mdA[i]));
     const netB = cumsum(miB.map((v,i) => v - mdB[i]));
     cmpCharts.netloc = new Chart('chart-cmp-netloc', {{

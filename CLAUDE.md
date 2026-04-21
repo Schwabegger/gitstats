@@ -40,7 +40,8 @@ README.md
 - Chart.js charts: activity (hour/dow/month/year/monthly-line), heatmap, authors bar,
   contributions per-author, files-over-time, LOC-over-time
 - Obfuscation + screenshot pipeline (`docs/screenshot.py`)
-- **Compare tab**: side-by-side author comparison — commits/month, hour/dow activity,
+- **Compare tab**: side-by-side author comparison — overlay chart (commits bars + separate
+  +LOC/−LOC lines per author on dual y-axes, zero-aligned, symlog-scaled), hour/dow activity,
   cumulative net-LOC, cumulative additions
 - **`--blame` mode**: git-blame-based actual LOC per author over time (who wrote the lines
   currently present in the project, accounting for deletions by others)

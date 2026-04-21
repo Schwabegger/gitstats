@@ -71,6 +71,7 @@ SECTIONS = [
     ('activity',      'screenshot-activity.png'),
     ('authors',       'screenshot-authors.png'),
     ('contributions', 'screenshot-contributions.png'),
+    ('compare',       'screenshot-compare.png'),
     ('files',         'screenshot-files.png'),
     ('lines',         'screenshot-lines.png'),
 ]
