@@ -8,9 +8,11 @@ A modern git repository statistics generator. Analyzes any git repo and produces
 - **Activity** — commits by hour/day/month/year, monthly timeline, hour-of-week heatmap
 - **Authors** — ranked table with insertions/deletions, first/last commit, active days
 - **Contributions** — per-author bar charts with metric (commits/additions/deletions), sort, and time-range filters
+- **Compare** — side-by-side author comparison: overlay chart of commits (bars) + per-author +LOC/−LOC lines (dual y-axes, symlog-scaled), hour/day activity, cumulative net-LOC and additions
 - **Files** — file count over time, extension breakdown with line counts
 - **Lines** — net LOC over time (cumulative insertions − deletions), notable large commits
 - **Tags** — tag list with dates
+- **Blame mode** (`--blame`) — git-blame-based "lines currently present" per author over time, with caching and configurable file/path filters
 
 All charts are interactive (Chart.js). The output is a single `index.html` — no external assets required at viewing time (fonts/Chart.js load from CDN).
 
@@ -22,7 +24,7 @@ All charts are interactive (Chart.js). The output is a single `index.html` — n
 ## Usage
 
 ```bash
-python3 gitstats.py <git_repo_path> [output_directory]
+python3 gitstats.py <git_repo_path> [output_directory] [--blame [cache_dir]]
 ```
 
 ```bash
@@ -31,6 +33,9 @@ python3 gitstats.py .
 
 # Analyze a specific repo, write to custom directory
 python3 gitstats.py ~/projects/myapp ~/Desktop/myapp-stats
+
+# Enable blame-based LOC tracking with a cache directory
+python3 gitstats.py ~/projects/myapp ~/Desktop/myapp-stats --blame ~/.gitstats-cache
 
 # Then open the report
 open gitstats_report/index.html       # macOS
@@ -69,6 +74,13 @@ A single `index.html` file in the output directory. Open it in any modern browse
 <summary>Contributions — per-author monthly bar charts with filters</summary>
 
 ![Contributions](docs/screenshot-contributions.png)
+
+</details>
+
+<details>
+<summary>Compare — side-by-side author comparison with overlay LOC chart</summary>
+
+![Compare](docs/screenshot-compare.png)
 
 </details>
 
