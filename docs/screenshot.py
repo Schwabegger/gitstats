@@ -3,9 +3,7 @@
 screenshot.py — Generate obfuscated sample report and take Playwright screenshots.
 
 Usage:
-    python3 docs/screenshot.py [path-to-git-repo]
-
-    Defaults to REDACTED_REPO repo if no argument given.
+    python3 docs/screenshot.py <path-to-git-repo>
 
 Steps:
     1. Run gitstats.py to generate a raw HTML report
@@ -14,18 +12,18 @@ Steps:
     4. Write obfuscated HTML to docs/sample_report.html
 
 Requirements:
-    pip install playwright
+    pip install playwright faker
     playwright install chromium
 """
 
 import sys
-import os
 import re
 import json
 import hashlib
 import asyncio
 import subprocess
 from pathlib import Path
+from faker import Faker
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -33,19 +31,18 @@ SCRIPT_DIR = Path(__file__).parent
 REPO_ROOT  = SCRIPT_DIR.parent
 TMP_DIR    = Path('/tmp/gitstats_screenshot_run')
 
-DEFAULT_REPO = '/private/repo'
+# ── Author name generation ─────────────────────────────────────────────────────
+# Each real name maps deterministically to a fake name via a seeded Faker instance.
 
-# ── Author mapping (real → fake) ──────────────────────────────────────────────
-# Add or update entries here whenever the contributor list changes.
+_fake_name_cache: dict[str, str] = {}
 
-AUTHOR_MAP = {
-    'REDACTED_AUTHOR':        'REDACTED_AUTHOR',
-    'REDACTED_AUTHOR':          'REDACTED_AUTHOR',
-    'REDACTED_AUTHOR':        'REDACTED_AUTHOR',
-    'REDACTED_AUTHOR':  'REDACTED_AUTHOR',
-    'REDACTED_AUTHOR':          'REDACTED_AUTHOR',
-    'REDACTED_AUTHOR': 'REDACTED_AUTHOR',
-}
+def fake_author_name(real: str) -> str:
+    if real not in _fake_name_cache:
+        seed = int(hashlib.md5(f'author:{real}'.encode()).hexdigest(), 16)
+        f = Faker()
+        Faker.seed(seed)
+        _fake_name_cache[real] = f.name()
+    return _fake_name_cache[real]
 
 # ── Commit message fixups ─────────────────────────────────────────────────────
 # Only touch messages that are genuinely unintelligible or personally revealing.
@@ -86,7 +83,7 @@ def fake_hash_short(real_short: str) -> str:
     return hashlib.md5(f'salt:{real_short}'.encode()).hexdigest()[:8]
 
 def obfuscate_author(name: str) -> str:
-    return AUTHOR_MAP.get(name, name)
+    return fake_author_name(name)
 
 # ── Obfuscation ───────────────────────────────────────────────────────────────
 
@@ -106,7 +103,10 @@ def obfuscate(html: str) -> str:
     )
 
     # 3. Replace author names everywhere in HTML
-    for real, fake in AUTHOR_MAP.items():
+    # Discover real names from data-author attributes — no hardcoded map needed.
+    real_names = re.findall(r'data-author="([^"]+)"', html)
+    for real in dict.fromkeys(real_names):  # deduplicate, preserve order
+        fake = fake_author_name(real)
         esc = re.escape(real)
         html = html.replace(f'data-author="{real}"', f'data-author="{fake}"')
         html = re.sub(rf'>\s*{esc}\s*<', f'>{fake}<', html)
@@ -255,7 +255,10 @@ async def take_screenshots(html_path: Path):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
-    repo_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_REPO
+    if len(sys.argv) < 2:
+        print('Usage: python3 docs/screenshot.py <path-to-git-repo>', file=sys.stderr)
+        sys.exit(1)
+    repo_path = sys.argv[1]
 
     TMP_DIR.mkdir(parents=True, exist_ok=True)
 

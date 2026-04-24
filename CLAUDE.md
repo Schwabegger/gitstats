@@ -87,5 +87,5 @@ broken axis layouts (rotated labels eating vertical space, flat bars).
 ## Rules
 
 - **NEVER auto-push** — always ask before `git push`
-- Default screenshot repo: `/private/repo`
+- Default screenshot repo: pass as CLI arg — `python3 docs/screenshot.py <path>`
 - `docs/screenshot.py` requires `pillow` + `playwright` (`pip install pillow playwright`)
